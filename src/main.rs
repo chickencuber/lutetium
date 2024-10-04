@@ -2,6 +2,7 @@ use std::{env, fs};
 mod tokenizer;
 use tokenizer::tokenize;
 mod ast;
+use ast::Parser;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -20,9 +21,8 @@ fn main() {
 
 fn use_file(file_path: &str) {
     if let Ok(file) = fs::read_to_string(file_path) {
-        for token in tokenize(file).iter() {
-            println!("{}", token.to_str())
-        }
+        let mut parser = Parser::new(tokenize(file));
+        println!("{:?}", parser.get_ast());
     } else {
         println!("file doesn't exist or there was an error")
     }

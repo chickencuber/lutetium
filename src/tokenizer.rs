@@ -1,7 +1,7 @@
 use json::{object, object::Object, JsonValue};
 use regex::Regex;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Token {
     MathOperator(char),
     BinaryOperator(String),
@@ -166,7 +166,15 @@ pub fn tokenize(code: String) -> Vec<Token> {
             //do nothing
         } else if c.is_numeric() {
             let mut num = String::from("");
-            while c.is_numeric() {
+            let mut dec = false;
+            while c.is_numeric() || *c == '.' {
+                if *c == '.' {
+                    if dec {
+                        panic!("unexpected character");
+                    } else {
+                        dec = true;
+                    }
+                }
                 num.push(*c);
                 i += 1;
                 c = chars.get(i).unwrap();
