@@ -1,0 +1,58 @@
+cc = gcc
+shared-cflags = -std=c23 -Wall -Wextra -Wconversion -Wshadow -Wformat=2 -Iinclude
+cflags = $shared-cflags -O2
+dev-cflags = $shared-cflags -g3 -O0 -fsanitize=address,undefined -fno-omit-frame-pointer
+
+shared-ldflags = -lgccjit
+ldflags = $shared-ldflags
+dev-ldflags = $shared-ldflags -fsanitize=address,undefined
+
+rule cc
+    depfile = $out.d
+    command = bear -- $cc -MD -MF $out.d $cflags -c $in -o $out
+rule link
+    command = $cc $ldflags $in -o $out
+rule mkdir
+    command = mkdir -p $out
+rule clean
+    command = rm -rf build/
+
+rule run
+    command = LSAN_OPTIONS=suppressions=lsan.supp $in $$RUN_ARGS
+rule run-gf2
+    command = LSAN_OPTIONS=suppressions=lsan.supp gf2 $in $$RUN_ARGS
+
+build build/: mkdir
+build build/release: mkdir || build/
+build build/dev: mkdir || build/
+
+build build/release/ast.o: cc src/ast.c || build/release/
+build build/release/compile.o: cc src/compile.c || build/release/
+build build/release/lexer.o: cc src/lexer.c || build/release/
+build build/release/main.o: cc src/main.c || build/release/
+build build/release/lutc : link build/release/main.o build/release/lexer.o build/release/ast.o build/release/compile.o
+
+
+build build/dev/compile.o: cc src/compile.c || build/dev/
+    cflags=$dev-cflags
+build build/dev/ast.o: cc src/ast.c || build/dev/
+    cflags=$dev-cflags
+build build/dev/lexer.o: cc src/lexer.c || build/dev/
+    cflags=$dev-cflags
+build build/dev/main.o: cc src/main.c || build/dev/
+    cflags=$dev-cflags
+build build/dev/lutc : link build/dev/main.o build/dev/lexer.o build/dev/ast.o build/dev/compile.o
+    ldflags=$dev-ldflags
+
+
+build FORCE: phony
+
+build dev: phony build/dev/lutc
+build release: phony build/release/lutc
+
+build clean: clean | FORCE
+build run-gf2: run-gf2 build/dev/lutc | FORCE
+build run-dev: run build/dev/lutc | FORCE
+build run: run build/release/lutc | FORCE
+
+default release

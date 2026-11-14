@@ -1,0 +1,7 @@
+
+extern C fn printf(format: cstr);
+
+fn main() -> i32 {
+    printf("Hello, world!\n");
+    return 71;
+}
