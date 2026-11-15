@@ -94,6 +94,18 @@ IMPORT extern Allocator DEFAULT_ALLOCATOR;
         _res;                                                                  \
     })
 
+
+#define Option(t) const t*
+#define Some(v) ({\
+        static auto __var__ = v;\
+        &__var__;\
+        })
+#define SomeT(t, v) ({ \
+    static t __var__ = (v); \
+    &__var__; \
+})
+#define None NULL
+
 #define da_from(da, start) da_sub(da, start, (da)->len - (start))
 #define da_to(da, end) da_sub(da, 0, end)
 

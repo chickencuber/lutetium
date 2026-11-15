@@ -27,7 +27,6 @@ struct Type {
 #define TYPE "%s%.*s"
 #define FMTTYPE(p) TYPEKIND[(p)->kind], (int)(p)->depth, "****************"
 
-
 #define CONV "%s"
 #define FMTCONV(p) FN_CONV_NAMES[p]
 
@@ -46,6 +45,7 @@ typedef enum ASTKind {
     AST_BLOCK,
     AST_IDENT,
     AST_FUNCTION_CALL,
+    AST_VARIABLE_DECLARATION,
 } ASTKind;
 
 typedef struct Parameter Parameter;
@@ -54,20 +54,16 @@ struct Parameter {
     Type type;
 };
 
-#define FN_CONV_KIND(X) \
-    X("lut", CONV_LUT)  \
+#define FN_CONV_KIND(X)                                                        \
+    X("lut", CONV_LUT)                                                         \
     X("C", CONV_C)
 
 #define ENUM(_, value) value,
-typedef enum {
-    FN_CONV_KIND(ENUM)
-} FnConv;
+typedef enum { FN_CONV_KIND(ENUM) } FnConv;
 #undef ENUM
 
 #define ENUM(name, _) name,
-static const char* FN_CONV_NAMES[] = {
-    FN_CONV_KIND(ENUM)
-};
+static const char* FN_CONV_NAMES[] = {FN_CONV_KIND(ENUM)};
 #undef ENUM
 
 typedef struct AST AST;
@@ -78,6 +74,11 @@ struct AST {
     ASTKind kind;
     size_t line, col;
     union {
+        struct {
+            String name;
+            AST* val; // nulled out will be uninitialized
+            Type type;
+        } var_decl;
         struct {
             String name;
             AST* body;
@@ -91,8 +92,9 @@ struct AST {
         struct {
             String name;
             Type return_type;
-            ParameterList params; //optional name this time
+            ParameterList params; // optional name this time
             FnConv conv;
+            bool va_args;
         } function_decl;
 
         struct {

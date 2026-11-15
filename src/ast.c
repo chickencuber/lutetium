@@ -184,11 +184,22 @@ Type parse_type(Lexer* lex) {
     return type;
 }
 
-ParameterList parse_params(Allocator* alloc, Lexer* lex, bool optional_name) {
+ParameterList parse_params(Allocator* alloc, Lexer* lex, bool* variadic,
+                           bool optional_name) {
     ParameterList params = {0};
     da_init(&params, alloc);
 
+    if (variadic)
+        *variadic = false;
+
     while (peekToken(lex).kind != TOKEN_CLOSE_PAREN) {
+        if (peekToken(lex).kind == TOKEN_VA_ARGS) {
+            assert(variadic, "variadic parameters are only allowed in C declarations\n");
+            getToken(lex);
+            *variadic = true;
+            break;
+        }
+
         Token ident = getToken(lex);
         String name = {0};
 
@@ -224,7 +235,7 @@ AST* parse_fn(Allocator* alloc, Lexer* lex, Pos pos) {
     freeToken(&ident);
     consume_required(TOKEN_OPEN_PAREN, lex);
     // TASK(20261112-140400-119-n6-8118a53c): add argument support
-    ParameterList params = parse_params(alloc, lex, false);
+    ParameterList params = parse_params(alloc, lex, NULL, false);
     Type ret_type;
     if (optional_token(TOKEN_ARROW, lex)) {
         ret_type = parse_type(lex);
@@ -260,7 +271,8 @@ AST* parse_extern(Allocator* alloc, Lexer* lex, Pos pos) {
     String name = string_clone(&ident.data, alloc);
     freeToken(&ident);
     consume_required(TOKEN_OPEN_PAREN, lex);
-    ParameterList params = parse_params(alloc, lex, true);
+    bool va_args;
+    ParameterList params = parse_params(alloc, lex, &va_args, true);
     Type ret_type;
     if (optional_token(TOKEN_ARROW, lex)) {
         ret_type = parse_type(lex);
@@ -275,8 +287,33 @@ AST* parse_extern(Allocator* alloc, Lexer* lex, Pos pos) {
         .alloc = alloc,
         .data.function_decl.name = name,
         .data.function_decl.return_type = ret_type,
+        .data.function_decl.va_args = va_args,
         .data.function_decl.params = params,
         .data.function_decl.conv = CONV_C,
+    };
+    return p;
+}
+
+AST* parse_var_decl(Allocator* alloc, Lexer* lex, Pos pos) {
+    Token ident = require_token(TOKEN_IDENT, lex);
+    String name = string_clone(&ident.data, alloc);
+    freeToken(&ident);
+    consume_required(TOKEN_COLON, lex);
+    Type type = parse_type(lex);
+    AST* ast = NULL;
+    if (optional_token(TOKEN_EQUALS, lex)) {
+        ast = ast_parse_expr(alloc, lex);
+    }
+    consume_required(TOKEN_SEMI, lex);
+
+    AST* p = ALLOC(alloc, sizeof(AST));
+    *p = (AST){
+        SETPOS(&pos),
+        .kind = AST_VARIABLE_DECLARATION,
+        .alloc = alloc,
+        .data.var_decl.name = name,
+        .data.var_decl.type = type,
+        .data.var_decl.val = ast,
     };
     return p;
 }
@@ -294,6 +331,10 @@ AST* ast_parse_stmt(Allocator* alloc, Lexer* lex, bool toplevel) {
         auto extern_v = parse_extern(alloc, lex, (Pos){SETPOS(&token)});
         freeToken(&token);
         return extern_v;
+    case TOKEN_LET:
+        auto decl = parse_var_decl(alloc, lex, (Pos){SETPOS(&token)});
+        freeToken(&token);
+        return decl;
     case TOKEN_RETURN: {
         assert(!toplevel, "return statements must not be at toplevel\n");
         if (optional_token(TOKEN_SEMI, lex)) {
@@ -408,10 +449,18 @@ static void print_escaped_string(String str) {
 }
 
 void ast_display_i(AST* ast, size_t depth) {
+    if (ast == NULL)
+        return;
     for (size_t i = 0; i < depth; i++)
         printf("    ");
 
     switch (ast->kind) {
+    case AST_VARIABLE_DECLARATION:
+        printf("VAR " STRING ": " TYPE ": " POS "\n",
+               FMTSTRING(&ast->data.var_decl.name),
+               FMTTYPE(&ast->data.var_decl.type), FMTPOS(ast));
+        ast_display_i(ast->data.var_decl.val, depth + 1);
+        break;
     case AST_FUNCTION_CALL:
         printf("Function Call: " STRING ": " POS "\n",
                FMTSTRING(&ast->data.function_call.name), FMTPOS(ast));
@@ -502,6 +551,10 @@ void ast_free(AST* ast) {
     if (ast == NULL)
         return;
     switch (ast->kind) {
+    case AST_VARIABLE_DECLARATION:
+        da_free(&ast->data.var_decl.name);
+        ast_free(ast->data.var_decl.val);
+        break;
     case AST_FUNCTION_CALL:
         da_free(&ast->data.function_call.name);
         da_free_call(&ast->data.function_call.args, arg, { ast_free(*arg); });

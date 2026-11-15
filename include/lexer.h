@@ -32,13 +32,16 @@ struct Pos {
     X("*", TOKEN_STAR)                                                         \
     X(";", TOKEN_SEMI)                                                         \
     X(",", TOKEN_COMMA)                                                        \
-    X(":", TOKEN_COLON)
+    X(":", TOKEN_COLON)                                                        \
+    X("...", TOKEN_VA_ARGS)                                                    \
+    X("=", TOKEN_EQUALS)
 
 #define KEYWORD_LIST(X)                                                        \
     X("fn", TOKEN_FN)                                                          \
     X("extern", TOKEN_EXTERN)                                                  \
     X("true", TOKEN_TRUE)                                                      \
     X("false", TOKEN_FALSE)                                                    \
+    X("let", TOKEN_LET)                                                        \
     X("return", TOKEN_RETURN)
 
 #define KV_ENUM_VALUE(_, kind) kind,

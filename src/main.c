@@ -1,5 +1,4 @@
 #include "ast.h"
-#include "compile.h"
 #include <stdio.h>
 #define AIDS_IMPLEMENTATION
 #define AIDS_SILENT_WARNINGS
@@ -18,19 +17,7 @@ int main(int argc, char** argv) {
     freeLexer(&lexer);
     fclose(fd);
     ast_display(ast);
-
-
-    Compiler* cc = compiler_create(&DEFAULT_ALLOCATOR);
-    compiler_compile(cc, ast);
     ast_free(ast);
 
-    int (*program_main)(void) = compiler_get_function(cc, "main");
-    assert(program_main, "Errors compiling: %s\n", compiler_get_error(cc));
-    printf("-----------------------------------------------------\n");
-    printf("running\n");
-    printf("-----------------------------------------------------\n");
-    int exit_code = program_main();
-    printf("exit code: %d\n", exit_code);
-    compiler_free(cc);
     return 0;
 }
