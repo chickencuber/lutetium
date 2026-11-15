@@ -2,7 +2,15 @@
 #include "aids.h"
 #include "lexer.h"
 
+// not defined until later
+typedef struct Scope Scope;
+void free_scope(Scope*);
+
 #define TYPE_KIND(X)                                                           \
+    X(".NULL", TYPE_NULL)                                                      \
+    X(".INFER", TYPE_INFER)                                                    \
+    X(".POINTER", TYPE_POINTER)                                                \
+    X(".FUNCTION", TYPE_FUNCTION)                                              \
     X("void", TYPE_VOID)                                                       \
     X("i8", TYPE_I8)                                                           \
     X("i16", TYPE_I16)                                                         \
@@ -19,13 +27,36 @@
 typedef enum TypeKind { TYPE_KIND(ENUM) } TypeKind;
 #undef ENUM
 
+#define FN_CONV_KIND(X)                                                        \
+    X("lut", CONV_LUT)                                                         \
+    X("C", CONV_C)
+
+#define ENUM(_, value) value,
+typedef enum { FN_CONV_KIND(ENUM) } FnConv;
+#undef ENUM
+
 typedef struct Type Type;
-struct Type {
-    TypeKind kind;
-    size_t depth;
+typedef struct Parameter Parameter;
+struct Parameter {
+    String name;
+    Type* type;
 };
-#define TYPE "%s%.*s"
-#define FMTTYPE(p) TYPEKIND[(p)->kind], (int)(p)->depth, "****************"
+typedef DA(Parameter) ParameterList;
+struct Type {
+    Allocator* alloc;
+    TypeKind kind;
+    union {
+        struct {
+            Type* child;
+        } pointer;
+        struct {
+            Type* return_type;
+            ParameterList params;
+            bool va_args;
+            FnConv conv;
+        } function;
+    } data;
+};
 
 #define CONV "%s"
 #define FMTCONV(p) FN_CONV_NAMES[p]
@@ -48,41 +79,28 @@ typedef enum ASTKind {
     AST_VARIABLE_DECLARATION,
 } ASTKind;
 
-typedef struct Parameter Parameter;
-struct Parameter {
-    String name;
-    Type type;
-};
-
-#define FN_CONV_KIND(X)                                                        \
-    X("lut", CONV_LUT)                                                         \
-    X("C", CONV_C)
-
-#define ENUM(_, value) value,
-typedef enum { FN_CONV_KIND(ENUM) } FnConv;
-#undef ENUM
-
 #define ENUM(name, _) name,
 static const char* FN_CONV_NAMES[] = {FN_CONV_KIND(ENUM)};
 #undef ENUM
 
 typedef struct AST AST;
 typedef DA(AST*) ASTList;
-typedef DA(Parameter) ParameterList;
 struct AST {
     Allocator* alloc;
     ASTKind kind;
     size_t line, col;
+    Type* type; // filled during semantic analysis
     union {
         struct {
             String name;
             AST* val; // nulled out will be uninitialized
-            Type type;
+            Type* type;
         } var_decl;
         struct {
+            Scope* scope; // needed for param names and type checking for that
             String name;
             AST* body;
-            Type return_type;
+            Type* return_type;
             ParameterList params;
         } function;
         struct {
@@ -90,8 +108,9 @@ struct AST {
         } str_lit;
 
         struct {
+            Scope* scope; // needed for param names and type checking for that
             String name;
-            Type return_type;
+            Type* return_type;
             ParameterList params; // optional name this time
             FnConv conv;
             bool va_args;
@@ -121,6 +140,7 @@ struct AST {
         } ident;
 
         struct {
+            Scope* scope;
             ASTList statements;
             bool toplevel;
         } block;
@@ -130,5 +150,7 @@ struct AST {
 // this will collect the tokens
 AST* ast_parse_toplevel(Allocator*, Lexer*);
 
+void type_free(Type*);
+void type_display(Type*);
 void ast_display(AST*);
 void ast_free(AST*);

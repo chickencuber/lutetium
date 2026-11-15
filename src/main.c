@@ -1,4 +1,6 @@
+#include "analysis.h"
 #include "ast.h"
+#include "compile.h"
 #include <stdio.h>
 #define AIDS_IMPLEMENTATION
 #define AIDS_SILENT_WARNINGS
@@ -16,8 +18,10 @@ int main(int argc, char** argv) {
     AST* ast = ast_parse_toplevel(&DEFAULT_ALLOCATOR, &lexer);
     freeLexer(&lexer);
     fclose(fd);
+    analyze(ast);
     ast_display(ast);
-    ast_free(ast);
 
+    compile_to_file(ast, "test.o");
+    ast_free(ast);
     return 0;
 }

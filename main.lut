@@ -1,9 +1,6 @@
-
 extern C fn printf(cstr, ...);
-let y: i16 = 420;
 
 fn main() -> i32 {
-    let x: i32 = 69;
-    printf("Hello, world! %d, %d;\n", x, y);
-    return 71;
+    printf("hello world\n");
+    return 0;
 }

@@ -1,5 +1,5 @@
 cc = gcc
-shared-cflags = -std=gnu23 -Wall -Wextra -Wconversion -Wshadow -Wformat=2 -Iinclude
+shared-cflags = -std=gnu23 -Wall -Wextra -Wconversion -Wshadow -Wformat=2 -Iinclude -Wno-unused-variable
 cflags = $shared-cflags -O2
 dev-cflags = $shared-cflags -g3 -O0 -fsanitize=address,undefined -fno-omit-frame-pointer
 
@@ -26,13 +26,16 @@ build build/: mkdir
 build build/release: mkdir || build/
 build build/dev: mkdir || build/
 
+build build/release/compile.o: cc src/compile.c || build/release/
 build build/release/ast.o: cc src/ast.c || build/release/
 build build/release/analysis.o: cc src/analysis.c || build/release/
 build build/release/lexer.o: cc src/lexer.c || build/release/
 build build/release/main.o: cc src/main.c || build/release/
-build build/release/lutc : link build/release/main.o build/release/lexer.o build/release/ast.o build/release/analysis.o
+build build/release/lutc : link build/release/main.o build/release/lexer.o build/release/ast.o build/release/analysis.o build/release/compile.o
 
 
+build build/dev/compile.o: cc src/compile.c || build/dev/
+    cflags=$dev-cflags
 build build/dev/analysis.o: cc src/analysis.c || build/dev/
     cflags=$dev-cflags
 build build/dev/ast.o: cc src/ast.c || build/dev/
@@ -41,7 +44,7 @@ build build/dev/lexer.o: cc src/lexer.c || build/dev/
     cflags=$dev-cflags
 build build/dev/main.o: cc src/main.c || build/dev/
     cflags=$dev-cflags
-build build/dev/lutc : link build/dev/main.o build/dev/lexer.o build/dev/ast.o build/dev/analysis.o
+build build/dev/lutc : link build/dev/main.o build/dev/lexer.o build/dev/ast.o build/dev/analysis.o build/dev/compile.o
     ldflags=$dev-ldflags
 
 

@@ -61,7 +61,7 @@ Lexer createLexer(FILE* fd, Allocator* alloc) {
         .fd = fd,
         .line = 1,
         .col = 1,
-        .unread = {0},
+        .unread = {},
         .count = 0,
     };
     p.trie = trie_node_create(alloc);

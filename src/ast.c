@@ -2,6 +2,9 @@
 #include "lexer.h"
 #include <inttypes.h>
 AST* ast_parse_block(Allocator* alloc, Lexer* lex, bool toplevel, Pos pos);
+AST* ast_parse_stmt(Allocator* alloc, Lexer* lex, bool toplevel);
+ParameterList parse_params(Allocator* alloc, Lexer* lex, bool* variadic,
+                           bool optional_name);
 
 Token require_token(TokenKind token_kind, Lexer* lex) {
     Token token = getToken(lex);
@@ -104,7 +107,7 @@ AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
                 }
 
                 if (c.kind != TOKEN_COMMA)
-                    panic("expected ',' or ')'\n");
+                    panic("expected ',' or ')' at "POS"\n", FMTPOS(&c));
 
                 freeToken(&c);
             }
@@ -163,22 +166,61 @@ typedef struct {
 static const TypeEntry BUILTIN_TYPES[] = {TYPE_KIND(MAP)};
 #undef MAP
 
-Type parse_type(Lexer* lex) {
-    Token token = require_token(TOKEN_IDENT, lex);
+Type parse_type(Allocator* alloc, Lexer* lex) {
+    Token token = getToken(lex);
+    Type type = {
+        .alloc = alloc,
+    };
     bool found = false;
-    Type type = {0};
-    fa_foreach(d, BUILTIN_TYPES) {
-        if (string_compare_cstr(token.data, d->name)) {
-            type.kind = d->kind;
-            found = true;
-            break;
+    if (token.kind == TOKEN_IDENT) {
+        fa_foreach(d, BUILTIN_TYPES) {
+            if (string_compare_cstr(token.data, d->name)) {
+                type.kind = d->kind;
+                found = true;
+                break;
+            }
         }
+    } else if (token.kind == TOKEN_FN) {
+        found = true;
+        Token conv = getToken(lex);
+        FnConv convention;
+        if (conv.kind == TOKEN_IDENT && string_compare_cstr(conv.data, "C")) {
+            convention = CONV_C;
+            freeToken(&conv);
+        } else {
+            convention = CONV_LUT;
+            unreadToken(conv, lex);
+        }
+        consume_required(TOKEN_OPEN_PAREN, lex);
+        bool variadic = false;
+        ParameterList params = parse_params(
+            alloc, lex, convention == CONV_C ? &variadic : NULL, true);
+        Type* ret_type = ALLOC(alloc, sizeof(Type));
+        if (optional_token(TOKEN_ARROW, lex)) {
+            *ret_type = parse_type(alloc, lex);
+        } else {
+            *ret_type = (Type){.kind = TYPE_VOID, .alloc = alloc};
+        }
+        type.kind = TYPE_FUNCTION;
+        type.data.function = (typeof(type.data.function)){
+            .params = params,
+            .return_type = ret_type,
+            .conv = convention,
+            .va_args = variadic,
+        };
+    } else if(token.kind == TOKEN_OPEN_PAREN) {
+        found = true;
+        type = parse_type(alloc, lex);
+        consume_required(TOKEN_CLOSE_PAREN, lex);
     }
     assert(found, "unknown type '" STRING "' at " POS "\n",
            FMTSTRING(&token.data), FMTPOS(&token));
     freeToken(&token);
     while (optional_token(TOKEN_STAR, lex)) {
-        type.depth++;
+        Type* temp = ALLOC(alloc, sizeof(Type));
+        *temp = type;
+        type.kind = TYPE_POINTER;
+        type.data.pointer.child = temp;
     }
 
     return type;
@@ -193,9 +235,9 @@ ParameterList parse_params(Allocator* alloc, Lexer* lex, bool* variadic,
         *variadic = false;
 
     while (peekToken(lex).kind != TOKEN_CLOSE_PAREN) {
-        if (peekToken(lex).kind == TOKEN_VA_ARGS) {
-            assert(variadic, "variadic parameters are only allowed in C declarations\n");
-            getToken(lex);
+        if (optional_token(TOKEN_VA_ARGS, lex)) {
+            assert(variadic,
+                   "variadic parameters are only allowed in C declarations\n");
             *variadic = true;
             break;
         }
@@ -203,26 +245,24 @@ ParameterList parse_params(Allocator* alloc, Lexer* lex, bool* variadic,
         Token ident = getToken(lex);
         String name = {0};
 
-        if (ident.kind == TOKEN_IDENT && peekToken(lex).kind == TOKEN_COLON) {
+        if (ident.kind == TOKEN_IDENT && optional_token(TOKEN_COLON, lex)) {
             name = string_clone(&ident.data, alloc);
-            consume_required(TOKEN_COLON, lex);
             freeToken(&ident);
         } else {
             assert(optional_name, "expected parameter name followed by ':'\n");
             unreadToken(ident, lex);
         }
 
-        Parameter param = {
-            .name = name,
-            .type = parse_type(lex),
-        };
+        Type* type = ALLOC(alloc, sizeof(Type));
+        *type = parse_type(alloc, lex);
 
-        da_append(&params, param);
+        da_append(&params, ((Parameter){
+                               .name = name,
+                               .type = type,
+                           }));
 
-        if (peekToken(lex).kind != TOKEN_COMMA)
+        if (!optional_token(TOKEN_COMMA, lex))
             break;
-
-        consume_required(TOKEN_COMMA, lex);
     }
 
     consume_required(TOKEN_CLOSE_PAREN, lex);
@@ -236,13 +276,13 @@ AST* parse_fn(Allocator* alloc, Lexer* lex, Pos pos) {
     consume_required(TOKEN_OPEN_PAREN, lex);
     // TASK(20261112-140400-119-n6-8118a53c): add argument support
     ParameterList params = parse_params(alloc, lex, NULL, false);
-    Type ret_type;
+    Type* ret_type = ALLOC(alloc, sizeof(Type));
     if (optional_token(TOKEN_ARROW, lex)) {
-        ret_type = parse_type(lex);
+        *ret_type = parse_type(alloc, lex);
     } else {
-        ret_type = (Type){.kind = TYPE_VOID, .depth = 0};
+        *ret_type = (Type){.kind = TYPE_VOID, .alloc = alloc};
     }
-    Token t = require_token(TOKEN_OPEN_BRACE, lex);
+    optional_token(TOKEN_COLON, lex);
     AST* p = ALLOC(alloc, sizeof(AST));
     *p = (AST){
         SETPOS(&pos),
@@ -250,11 +290,9 @@ AST* parse_fn(Allocator* alloc, Lexer* lex, Pos pos) {
         .alloc = alloc,
         .data.function.name = name,
         .data.function.return_type = ret_type,
-        .data.function.body =
-            ast_parse_block(alloc, lex, false, (Pos){SETPOS(&t)}),
+        .data.function.body = ast_parse_stmt(alloc, lex, false),
         .data.function.params = params,
     };
-    freeToken(&t);
     return p;
 }
 
@@ -273,11 +311,11 @@ AST* parse_extern(Allocator* alloc, Lexer* lex, Pos pos) {
     consume_required(TOKEN_OPEN_PAREN, lex);
     bool va_args;
     ParameterList params = parse_params(alloc, lex, &va_args, true);
-    Type ret_type;
+    Type* ret_type = ALLOC(alloc, sizeof(Type));
     if (optional_token(TOKEN_ARROW, lex)) {
-        ret_type = parse_type(lex);
+        *ret_type = parse_type(alloc, lex);
     } else {
-        ret_type = (Type){.kind = TYPE_VOID, .depth = 0};
+        *ret_type = (Type){.kind = TYPE_VOID, .alloc = alloc};
     }
     consume_required(TOKEN_SEMI, lex);
     AST* p = ALLOC(alloc, sizeof(AST));
@@ -298,8 +336,15 @@ AST* parse_var_decl(Allocator* alloc, Lexer* lex, Pos pos) {
     Token ident = require_token(TOKEN_IDENT, lex);
     String name = string_clone(&ident.data, alloc);
     freeToken(&ident);
-    consume_required(TOKEN_COLON, lex);
-    Type type = parse_type(lex);
+    Type* type = ALLOC(alloc, sizeof(Type));
+    if (optional_token(TOKEN_COLON, lex)) {
+        *type = parse_type(alloc, lex);
+    } else {
+        *type = (Type){
+            .alloc = alloc,
+            .kind = TYPE_INFER,
+        };
+    }
     AST* ast = NULL;
     if (optional_token(TOKEN_EQUALS, lex)) {
         ast = ast_parse_expr(alloc, lex);
@@ -321,18 +366,23 @@ AST* parse_var_decl(Allocator* alloc, Lexer* lex, Pos pos) {
 AST* ast_parse_stmt(Allocator* alloc, Lexer* lex, bool toplevel) {
     Token token = getToken(lex);
     switch (token.kind) {
+    case TOKEN_OPEN_BRACE:
+        assert(!toplevel, "block statements must not be at toplevel\n");
+        auto block = ast_parse_block(alloc, lex, false, ASPOS(&token));
+        freeToken(&token);
+        return block;
     case TOKEN_FN:
         assert(toplevel, "function declarations must be at toplevel\n");
-        auto fn = parse_fn(alloc, lex, (Pos){SETPOS(&token)});
+        auto fn = parse_fn(alloc, lex, ASPOS(&token));
         freeToken(&token);
         return fn;
     case TOKEN_EXTERN:
         assert(toplevel, "extern symbols must be at toplevel\n");
-        auto extern_v = parse_extern(alloc, lex, (Pos){SETPOS(&token)});
+        auto extern_v = parse_extern(alloc, lex, ASPOS(&token));
         freeToken(&token);
         return extern_v;
     case TOKEN_LET:
-        auto decl = parse_var_decl(alloc, lex, (Pos){SETPOS(&token)});
+        auto decl = parse_var_decl(alloc, lex, ASPOS(&token));
         freeToken(&token);
         return decl;
     case TOKEN_RETURN: {
@@ -448,64 +498,104 @@ static void print_escaped_string(String str) {
     putchar('"');
 }
 
+void type_display(Type* type) {
+    if (type->kind == TYPE_POINTER) {
+        type_display(type->data.pointer.child);
+        printf("*");
+        return;
+    } else if (type->kind == TYPE_FUNCTION) {
+        printf("(fn ");
+        if (type->data.function.conv == CONV_C) {
+            printf("C ");
+        }
+        printf("(");
+        da_foreach_enum(i, param, &type->data.function.params) {
+            if (i != 0)
+                printf(", ");
+            if (param->name.data == NULL) {
+                type_display(param->type);
+            } else {
+                printf(STRING ": ", FMTSTRING(&param->name));
+                type_display(param->type);
+            }
+        }
+        printf(") -> ");
+        type_display(type->data.function.return_type);
+        printf(")");
+        return;
+    }
+    printf("%s", TYPEKIND[type->kind]);
+}
+
 void ast_display_i(AST* ast, size_t depth) {
     if (ast == NULL)
         return;
+
     for (size_t i = 0; i < depth; i++)
         printf("    ");
 
     switch (ast->kind) {
     case AST_VARIABLE_DECLARATION:
-        printf("VAR " STRING ": " TYPE ": " POS "\n",
-               FMTSTRING(&ast->data.var_decl.name),
-               FMTTYPE(&ast->data.var_decl.type), FMTPOS(ast));
+        printf("VAR " STRING ": ", FMTSTRING(&ast->data.var_decl.name));
+        type_display(ast->data.var_decl.type);
+        printf(": " POS "\n", FMTPOS(ast));
+
         ast_display_i(ast->data.var_decl.val, depth + 1);
         break;
+
     case AST_FUNCTION_CALL:
         printf("Function Call: " STRING ": " POS "\n",
                FMTSTRING(&ast->data.function_call.name), FMTPOS(ast));
+
         da_foreach(expr, &ast->data.function_call.args) {
             ast_display_i(*expr, depth + 1);
         }
         break;
+
     case AST_FUNCTION:
         printf("Function: " STRING "(", FMTSTRING(&ast->data.function.name));
 
-        for (size_t i = 0; i < ast->data.function.params.len; i++) {
-            Parameter* param = &ast->data.function.params.data[i];
-
+        da_foreach_enum(i, param, &ast->data.function.params) {
             if (i != 0)
                 printf(", ");
 
-            printf(STRING ": " TYPE, FMTSTRING(&param->name),
-                   FMTTYPE(&param->type));
+            printf(STRING ": ", FMTSTRING(&param->name));
+            type_display(param->type);
         }
 
-        printf(") -> " TYPE ": " POS "\n",
-               FMTTYPE(&ast->data.function.return_type), FMTPOS(ast));
+        printf(") -> ");
+        type_display(ast->data.function.return_type);
+        printf(": " POS "\n", FMTPOS(ast));
+
         ast_display_i(ast->data.function.body, depth + 1);
         break;
+
     case AST_FUNCTION_DECL:
         printf("Extern Function " CONV ": " STRING "(",
                FMTCONV(ast->data.function_decl.conv),
                FMTSTRING(&ast->data.function_decl.name));
 
-        for (size_t i = 0; i < ast->data.function_decl.params.len; i++) {
-            Parameter* param = &ast->data.function_decl.params.data[i];
-
+        da_foreach_enum(i, param, &ast->data.function_decl.params) {
             if (i != 0)
                 printf(", ");
 
             if (param->name.data == NULL) {
-                printf(TYPE, FMTTYPE(&param->type));
+                type_display(param->type);
             } else {
-                printf(STRING ": " TYPE, FMTSTRING(&param->name),
-                       FMTTYPE(&param->type));
+                printf(STRING ": ", FMTSTRING(&param->name));
+                type_display(param->type);
             }
         }
 
-        printf(") -> " TYPE ": " POS "\n",
-               FMTTYPE(&ast->data.function_decl.return_type), FMTPOS(ast));
+        if (ast->data.function_decl.va_args) {
+            if (ast->data.function_decl.params.len != 0)
+                printf(", ");
+            printf("...");
+        }
+
+        printf(") -> ");
+        type_display(ast->data.function_decl.return_type);
+        printf(": " POS "\n", FMTPOS(ast));
         break;
 
     case AST_RETURN:
@@ -517,19 +607,23 @@ void ast_display_i(AST* ast, size_t depth) {
         printf("Integer: %" PRIu64 ": " POS "\n", ast->data.int_literal.value,
                FMTPOS(ast));
         break;
+
     case AST_BOOL_LIT:
         printf("BOOL: %s: " POS "\n",
                ast->data.bool_lit.value ? "true" : "false", FMTPOS(ast));
         break;
+
     case AST_IDENT:
         printf("IDENT '" STRING "': " POS "\n",
                FMTSTRING(&ast->data.ident.name), FMTPOS(ast));
         break;
+
     case AST_STR_LITERAL:
         printf("String ");
         print_escaped_string(ast->data.str_lit.value);
         printf(": " POS "\n", FMTPOS(ast));
         break;
+
     case AST_BLOCK:
         printf("Block%s: " POS "\n",
                ast->data.block.toplevel ? " (toplevel)" : "", FMTPOS(ast));
@@ -538,6 +632,7 @@ void ast_display_i(AST* ast, size_t depth) {
             ast_display_i(*stmt, depth + 1);
         }
         break;
+
     case AST_EXPR_STMT:
         printf("ExprStmt: " POS "\n", FMTPOS(ast));
         ast_display_i(ast->data.expr_stmt.value, depth + 1);
@@ -547,6 +642,21 @@ void ast_display_i(AST* ast, size_t depth) {
 
 void ast_display(AST* ast) { ast_display_i(ast, 0); }
 
+void type_free(Type* type) {
+    if (type == NULL)
+        return;
+    if (type->kind == TYPE_POINTER) {
+        type_free(type->data.pointer.child);
+    } else if (type->kind == TYPE_FUNCTION) {
+        type_free(type->data.function.return_type);
+        da_free_call(&type->data.function.params, b, {
+            da_free(&b->name);
+            type_free(b->type);
+        });
+    }
+    FREE(type->alloc, type);
+}
+
 void ast_free(AST* ast) {
     if (ast == NULL)
         return;
@@ -554,6 +664,7 @@ void ast_free(AST* ast) {
     case AST_VARIABLE_DECLARATION:
         da_free(&ast->data.var_decl.name);
         ast_free(ast->data.var_decl.val);
+        type_free(ast->data.var_decl.type);
         break;
     case AST_FUNCTION_CALL:
         da_free(&ast->data.function_call.name);
@@ -562,8 +673,13 @@ void ast_free(AST* ast) {
 
     case AST_FUNCTION:
         da_free(&ast->data.function.name);
-        da_free_call(&ast->data.function.params, b, { da_free(&b->name); });
+        da_free_call(&ast->data.function.params, b, {
+            da_free(&b->name);
+            type_free(b->type);
+        });
+        type_free(ast->data.function.return_type);
         ast_free(ast->data.function.body);
+        free_scope(ast->data.function.scope);
         break;
     case AST_RETURN:
         ast_free(ast->data.return_stmt.value);
@@ -583,12 +699,18 @@ void ast_free(AST* ast) {
         break;
     case AST_BLOCK:
         da_free_call(&ast->data.block.statements, stmt, { ast_free(*stmt); });
+        free_scope(ast->data.block.scope);
         break;
     case AST_FUNCTION_DECL:
         da_free(&ast->data.function_decl.name);
-        da_free_call(&ast->data.function_decl.params, b,
-                     { da_free(&b->name); });
+        da_free_call(&ast->data.function_decl.params, b, {
+            da_free(&b->name);
+            type_free(b->type);
+        });
+        type_free(ast->data.function_decl.return_type);
+        free_scope(ast->data.function_decl.scope);
         break;
     }
+    type_free(ast->type);
     FREE(ast->alloc, ast);
 }

@@ -1,3 +1,5 @@
+//this is temporary
+#pragma GCC system_header
 #ifndef AIDS
 #define AIDS
 

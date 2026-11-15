@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #define SETPOS(p) .col = (p)->col, .line = (p)->line
+#define ASPOS(p)                                                               \
+    (Pos) { SETPOS(p) }
 typedef struct Pos Pos;
 struct Pos {
     size_t line, col;
@@ -42,7 +44,8 @@ struct Pos {
     X("true", TOKEN_TRUE)                                                      \
     X("false", TOKEN_FALSE)                                                    \
     X("let", TOKEN_LET)                                                        \
-    X("return", TOKEN_RETURN)
+    X("return", TOKEN_RETURN)                                                  \
+    X("if", TOKEN_IF)
 
 #define KV_ENUM_VALUE(_, kind) kind,
 typedef enum TokenKind {
