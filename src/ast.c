@@ -2,7 +2,7 @@
 #include "lexer.h"
 #include <inttypes.h>
 AST* ast_parse_block(Allocator* alloc, Lexer* lex, bool toplevel, Pos pos);
-AST* ast_parse_stmt(Allocator* alloc, Lexer* lex, bool toplevel);
+AST* ast_parse_stmt(Allocator* alloc, Lexer* lexl);
 ParameterList parse_params(Allocator* alloc, Lexer* lex, bool* variadic,
                            bool optional_name);
 
@@ -107,7 +107,7 @@ AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
                 }
 
                 if (c.kind != TOKEN_COMMA)
-                    panic("expected ',' or ')' at "POS"\n", FMTPOS(&c));
+                    panic("expected ',' or ')' at " POS "\n", FMTPOS(&c));
 
                 freeToken(&c);
             }
@@ -154,6 +154,11 @@ AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
 }
 
 AST* ast_parse_expr(Allocator* alloc, Lexer* lex) {
+    if (optional_token(TOKEN_OPEN_PAREN, lex)) {
+        auto p = ast_parse_expr(alloc, lex);
+        consume_required(TOKEN_CLOSE_PAREN, lex);
+        return p;
+    }
     return ast_parse_primary_expr(alloc, lex);
 }
 
@@ -208,7 +213,7 @@ Type parse_type(Allocator* alloc, Lexer* lex) {
             .conv = convention,
             .va_args = variadic,
         };
-    } else if(token.kind == TOKEN_OPEN_PAREN) {
+    } else if (token.kind == TOKEN_OPEN_PAREN) {
         found = true;
         type = parse_type(alloc, lex);
         consume_required(TOKEN_CLOSE_PAREN, lex);
@@ -290,7 +295,7 @@ AST* parse_fn(Allocator* alloc, Lexer* lex, Pos pos) {
         .alloc = alloc,
         .data.function.name = name,
         .data.function.return_type = ret_type,
-        .data.function.body = ast_parse_stmt(alloc, lex, false),
+        .data.function.body = ast_parse_stmt(alloc, lex),
         .data.function.params = params,
     };
     return p;
@@ -363,30 +368,47 @@ AST* parse_var_decl(Allocator* alloc, Lexer* lex, Pos pos) {
     return p;
 }
 
-AST* ast_parse_stmt(Allocator* alloc, Lexer* lex, bool toplevel) {
+AST* ast_parse_stmt(Allocator* alloc, Lexer* lex) {
     Token token = getToken(lex);
     switch (token.kind) {
+    case TOKEN_WHILE: {
+        AST* cond = ast_parse_expr(alloc, lex);
+        AST* body = ast_parse_stmt(alloc, lex);
+        AST* p = ALLOC(alloc, sizeof(AST));
+        *p = (AST){
+            SETPOS(&token),
+            .kind = AST_WHILE,
+            .alloc = alloc,
+            .data.while_loop.cond = cond,
+            .data.while_loop.body = body,
+        };
+        freeToken(&token);
+        return p;
+    }
+    case TOKEN_IF: {
+        AST* cond = ast_parse_expr(alloc, lex);
+        AST* then = ast_parse_stmt(alloc, lex);
+        AST* el = NULL;
+        if (optional_token(TOKEN_ELSE, lex)) {
+            el = ast_parse_stmt(alloc, lex);
+        }
+        AST* p = ALLOC(alloc, sizeof(AST));
+        *p = (AST){
+            SETPOS(&token),
+            .kind = AST_IF,
+            .alloc = alloc,
+            .data.if_stmt.cond = cond,
+            .data.if_stmt.then = then,
+            .data.if_stmt.el = el,
+        };
+        freeToken(&token);
+        return p;
+    }
     case TOKEN_OPEN_BRACE:
-        assert(!toplevel, "block statements must not be at toplevel\n");
         auto block = ast_parse_block(alloc, lex, false, ASPOS(&token));
         freeToken(&token);
         return block;
-    case TOKEN_FN:
-        assert(toplevel, "function declarations must be at toplevel\n");
-        auto fn = parse_fn(alloc, lex, ASPOS(&token));
-        freeToken(&token);
-        return fn;
-    case TOKEN_EXTERN:
-        assert(toplevel, "extern symbols must be at toplevel\n");
-        auto extern_v = parse_extern(alloc, lex, ASPOS(&token));
-        freeToken(&token);
-        return extern_v;
-    case TOKEN_LET:
-        auto decl = parse_var_decl(alloc, lex, ASPOS(&token));
-        freeToken(&token);
-        return decl;
     case TOKEN_RETURN: {
-        assert(!toplevel, "return statements must not be at toplevel\n");
         if (optional_token(TOKEN_SEMI, lex)) {
             AST* p = ALLOC(alloc, sizeof(AST));
             *p = (AST){
@@ -415,7 +437,6 @@ AST* ast_parse_stmt(Allocator* alloc, Lexer* lex, bool toplevel) {
         unreadToken(token, lex);
         AST* expr = ast_parse_expr(alloc, lex);
         consume_required(TOKEN_SEMI, lex);
-        assert(!toplevel, "expression statments must not be at toplevel\n");
         AST* p = ALLOC(alloc, sizeof(AST));
         *p = (AST){
             SETPOS(expr),
@@ -424,6 +445,29 @@ AST* ast_parse_stmt(Allocator* alloc, Lexer* lex, bool toplevel) {
             .data.expr_stmt.value = expr,
         };
         return p;
+    }
+}
+
+AST* ast_parse_decl(Allocator* alloc, Lexer* lex, bool toplevel) {
+    Token token = getToken(lex);
+    switch (token.kind) {
+    case TOKEN_FN:
+        assert(toplevel, "function declarations must be at toplevel\n");
+        auto fn = parse_fn(alloc, lex, ASPOS(&token));
+        freeToken(&token);
+        return fn;
+    case TOKEN_EXTERN:
+        assert(toplevel, "extern symbols must be at toplevel\n");
+        auto extern_v = parse_extern(alloc, lex, ASPOS(&token));
+        freeToken(&token);
+        return extern_v;
+    case TOKEN_LET:
+        auto decl = parse_var_decl(alloc, lex, ASPOS(&token));
+        freeToken(&token);
+        return decl;
+    default:
+        unreadToken(token, lex);
+        return ast_parse_stmt(alloc, lex);
     }
 }
 
@@ -448,7 +492,7 @@ AST* ast_parse_block(Allocator* alloc, Lexer* lex, bool toplevel, Pos pos) {
             break;
         }
         unreadToken(token, lex);
-        da_append(&statements, ast_parse_stmt(alloc, lex, toplevel));
+        da_append(&statements, ast_parse_decl(alloc, lex, toplevel));
     }
 
     AST* p = ALLOC(alloc, sizeof(AST));
@@ -535,6 +579,28 @@ void ast_display_i(AST* ast, size_t depth) {
         printf("    ");
 
     switch (ast->kind) {
+    case AST_WHILE:
+        printf("WHILE: " POS "\n", FMTPOS(ast));
+        ast_display_i(ast->data.if_stmt.cond, depth + 1);
+        for (size_t i = 0; i < depth; i++)
+            printf("    ");
+        printf("DO\n");
+        ast_display_i(ast->data.if_stmt.then, depth + 1);
+        break;
+    case AST_IF:
+        printf("IF: " POS "\n", FMTPOS(ast));
+        ast_display_i(ast->data.if_stmt.cond, depth + 1);
+        for (size_t i = 0; i < depth; i++)
+            printf("    ");
+        printf("THEN\n");
+        ast_display_i(ast->data.if_stmt.then, depth + 1);
+        if (ast->data.if_stmt.el) {
+            for (size_t i = 0; i < depth; i++)
+                printf("    ");
+            printf("ELSE\n");
+            ast_display_i(ast->data.if_stmt.el, depth + 1);
+        }
+        break;
     case AST_VARIABLE_DECLARATION:
         printf("VAR " STRING ": ", FMTSTRING(&ast->data.var_decl.name));
         type_display(ast->data.var_decl.type);
@@ -661,6 +727,15 @@ void ast_free(AST* ast) {
     if (ast == NULL)
         return;
     switch (ast->kind) {
+    case AST_IF:
+        ast_free(ast->data.if_stmt.cond);
+        ast_free(ast->data.if_stmt.then);
+        ast_free(ast->data.if_stmt.el);
+        break;
+    case AST_WHILE:
+        ast_free(ast->data.while_loop.cond);
+        ast_free(ast->data.while_loop.body);
+        break;
     case AST_VARIABLE_DECLARATION:
         da_free(&ast->data.var_decl.name);
         ast_free(ast->data.var_decl.val);

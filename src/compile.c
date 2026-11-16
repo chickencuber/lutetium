@@ -102,11 +102,8 @@ static gcc_jit_type* compile_type(Compiler* c, Type* type) {
 /* Functions                                                                 */
 /* ------------------------------------------------------------------------- */
 
-static gcc_jit_function* compile_function(
-    Compiler* c,
-    AST* ast,
-    bool is_definition
-) {
+static gcc_jit_function* compile_function(Compiler* c, AST* ast,
+                                          bool is_definition) {
     String name;
     Type* return_type;
     ParameterList* params;
@@ -128,28 +125,19 @@ static gcc_jit_function* compile_function(
 
     assert(scope != NULL, "function has no scope\n");
 
-    // Allow top-level file-scope declarations to have a NULL parent safely
     Scope* lookup_scope = (scope->parent != NULL) ? scope->parent : scope;
 
-    Symbol* symbol = get_symbol(
-        lookup_scope,
-        name,
-        ast_pos(ast)
-    );
+    Symbol* symbol = get_symbol(lookup_scope, name, ast_pos(ast));
 
     assert(symbol != NULL, "function symbol not found\n");
 
-    /* Already registered with libgccjit. */
     if (symbol->compiler_data != NULL)
         return symbol->compiler_data;
 
     gcc_jit_param** gcc_params = NULL;
 
     if (params->len > 0) {
-        gcc_params = ALLOC(
-            c->alloc,
-            sizeof(gcc_jit_param*) * params->len
-        );
+        gcc_params = ALLOC(c->alloc, sizeof(gcc_jit_param*) * params->len);
     }
 
     for (size_t i = 0; i < params->len; i++) {
@@ -160,8 +148,7 @@ static gcc_jit_function* compile_function(
         const char* param_name;
 
         if (param->name.data == NULL) {
-            snprintf(generated_name, sizeof(generated_name),
-                     "arg%zu", i);
+            snprintf(generated_name, sizeof(generated_name), "arg%zu", i);
             param_name = generated_name;
         } else {
             allocated_name = compile_string(c, &param->name);
@@ -169,11 +156,7 @@ static gcc_jit_function* compile_function(
         }
 
         gcc_params[i] = gcc_jit_context_new_param(
-            c->ctx,
-            NULL,
-            compile_type(c, param->type),
-            param_name
-        );
+            c->ctx, NULL, compile_type(c, param->type), param_name);
 
         if (allocated_name != NULL)
             FREE(c->alloc, allocated_name);
@@ -181,19 +164,11 @@ static gcc_jit_function* compile_function(
 
     char* function_name = compile_string(c, &name);
 
-    // Correctly creates IMPORTED (U) for declarations and EXPORTED (T) for definitions
     gcc_jit_function* function = gcc_jit_context_new_function(
-        c->ctx,
-        NULL,
-        is_definition
-            ? GCC_JIT_FUNCTION_EXPORTED
-            : GCC_JIT_FUNCTION_IMPORTED,
-        compile_type(c, return_type),
-        function_name,
-        (int)params->len,
-        gcc_params,
-        va_args
-    );
+        c->ctx, NULL,
+        is_definition ? GCC_JIT_FUNCTION_EXPORTED : GCC_JIT_FUNCTION_IMPORTED,
+        compile_type(c, return_type), function_name, (int)params->len,
+        gcc_params, va_args);
 
     FREE(c->alloc, function_name);
 
@@ -320,32 +295,120 @@ static void initialize_global(Compiler* c, AST* ast, Scope* scope) {
 /* Statements                                                                */
 /* ------------------------------------------------------------------------- */
 
-static void compile_block(Compiler* c, gcc_jit_function* function,
-                          gcc_jit_block* block, AST* ast);
+static gcc_jit_block* compile_statement(Compiler* c, gcc_jit_function* function,
+                                        gcc_jit_block* block, AST* ast,
+                                        Scope* scope);
+
+static gcc_jit_block* compile_block(Compiler* c, gcc_jit_function* function,
+                                    gcc_jit_block* block, AST* ast);
 
 static bool statement_ends_with_return(AST* ast) {
     if (ast->kind == AST_RETURN)
         return true;
 
-    if (ast->kind != AST_BLOCK || ast->data.block.statements.len == 0)
-        return false;
+    if (ast->kind == AST_IF) {
+        return ast->data.if_stmt.el != NULL &&
+               statement_ends_with_return(ast->data.if_stmt.then) &&
+               statement_ends_with_return(ast->data.if_stmt.el);
+    }
 
-    AST* last =
-        ast->data.block.statements.data[ast->data.block.statements.len - 1];
+    if (ast->kind == AST_BLOCK) {
+        da_foreach(statement, &ast->data.block.statements) {
+            if (statement_ends_with_return(*statement))
+                return true;
+        }
+    }
 
-    return statement_ends_with_return(last);
+    return false;
 }
 
-static void compile_statement(Compiler* c, gcc_jit_function* function,
-                             gcc_jit_block* block, AST* ast, Scope* scope) {
+static gcc_jit_block* compile_statement(Compiler* c, gcc_jit_function* function,
+                                        gcc_jit_block* block, AST* ast,
+                                        Scope* scope) {
     switch (ast->kind) {
     case AST_BLOCK:
-        compile_block(c, function, block, ast);
-        break;
+        return compile_block(c, function, block, ast);
+
+    case AST_IF: {
+        gcc_jit_rvalue* condition =
+            compile_expression(c, ast->data.if_stmt.cond, scope);
+
+        AST* then_stmt = ast->data.if_stmt.then;
+        AST* else_stmt = ast->data.if_stmt.el;
+
+        bool then_returns = statement_ends_with_return(then_stmt);
+        bool else_returns =
+            else_stmt != NULL && statement_ends_with_return(else_stmt);
+
+        gcc_jit_block* then_block = gcc_jit_function_new_block(function, NULL);
+        gcc_jit_block* else_block = gcc_jit_function_new_block(function, NULL);
+        gcc_jit_block* after_block = NULL;
+
+        if (!then_returns || !else_returns)
+            after_block = gcc_jit_function_new_block(function, NULL);
+
+        gcc_jit_block_end_with_conditional(
+            block, NULL, condition, then_block, else_block);
+
+        gcc_jit_block* then_end =
+            compile_statement(c, function, then_block, then_stmt, scope);
+
+        if (!then_returns)
+            gcc_jit_block_end_with_jump(then_end, NULL, after_block);
+
+        if (else_stmt != NULL) {
+            gcc_jit_block* else_end =
+                compile_statement(c, function, else_block, else_stmt, scope);
+
+            if (!else_returns)
+                gcc_jit_block_end_with_jump(else_end, NULL, after_block);
+        } else {
+            gcc_jit_block_end_with_jump(else_block, NULL, after_block);
+        }
+
+        return after_block;
+    }
+
+    case AST_WHILE: {
+        gcc_jit_block* cond_block =
+            gcc_jit_function_new_block(function, NULL);
+
+        gcc_jit_block* body_block =
+            gcc_jit_function_new_block(function, NULL);
+
+        gcc_jit_block* after_block =
+            gcc_jit_function_new_block(function, NULL);
+
+        // Enter the condition check.
+        gcc_jit_block_end_with_jump(block, NULL, cond_block);
+
+        // Evaluate the condition on every iteration.
+        gcc_jit_rvalue* condition =
+            compile_expression(c, ast->data.while_loop.cond, scope);
+
+        gcc_jit_block_end_with_conditional(
+            cond_block, NULL, condition, body_block, after_block);
+
+        // Compile the loop body.
+        gcc_jit_block* body_end =
+            compile_statement(c, function, body_block,
+                              ast->data.while_loop.body, scope);
+
+        // Jump back to the condition unless the body always returns.
+        if (body_end != NULL) {
+            if (statement_ends_with_return(ast->data.while_loop.body)) {
+                // The body already terminates its paths.
+            } else {
+                gcc_jit_block_end_with_jump(body_end, NULL, cond_block);
+            }
+        }
+
+        return after_block;
+    }
 
     case AST_FUNCTION:
     case AST_FUNCTION_DECL:
-        break;
+        return block;
 
     case AST_RETURN:
         if (ast->data.return_stmt.value == NULL) {
@@ -355,7 +418,8 @@ static void compile_statement(Compiler* c, gcc_jit_function* function,
                 block, NULL,
                 compile_expression(c, ast->data.return_stmt.value, scope));
         }
-        break;
+
+        return NULL;
 
     case AST_VARIABLE_DECLARATION: {
         Type* type = ast->data.var_decl.type;
@@ -382,7 +446,7 @@ static void compile_statement(Compiler* c, gcc_jit_function* function,
                 compile_expression(c, ast->data.var_decl.val, scope));
         }
 
-        break;
+        return block;
     }
 
     case AST_EXPR_STMT: {
@@ -390,22 +454,28 @@ static void compile_statement(Compiler* c, gcc_jit_function* function,
             compile_expression(c, ast->data.expr_stmt.value, scope);
 
         gcc_jit_block_add_eval(block, NULL, value);
-        break;
+
+        return block;
     }
 
     default:
         assert(false, "unsupported statement in compile_statement\n");
-        break;
+        return block;
     }
 }
 
-static void compile_block(Compiler* c, gcc_jit_function* function,
-                          gcc_jit_block* block, AST* ast) {
+static gcc_jit_block* compile_block(Compiler* c, gcc_jit_function* function,
+                                    gcc_jit_block* block, AST* ast) {
     Scope* scope = ast->data.block.scope;
 
     da_foreach(statement, &ast->data.block.statements) {
-        compile_statement(c, function, block, *statement, scope);
+        block = compile_statement(c, function, block, *statement, scope);
+
+        if (block == NULL)
+            break;
     }
+
+    return block;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -413,7 +483,6 @@ static void compile_block(Compiler* c, gcc_jit_function* function,
 /* ------------------------------------------------------------------------- */
 
 static void compile_function_body(Compiler* c, AST* ast) {
-    // Pass true here since this is compiling an actual function definition body
     gcc_jit_function* function = compile_function(c, ast, true);
     gcc_jit_block* block = gcc_jit_function_new_block(function, NULL);
 
@@ -433,13 +502,10 @@ static void compile_function_body(Compiler* c, AST* ast) {
 
     AST* body = ast->data.function.body;
 
-    if (body->kind == AST_BLOCK) {
-        compile_block(c, function, block, body);
-    } else {
-        compile_statement(c, function, block, body, scope);
-    }
+    block = compile_statement(c, function, block, body, scope);
 
-    if (ast->data.function.return_type->kind == TYPE_VOID &&
+    if (block != NULL &&
+        ast->data.function.return_type->kind == TYPE_VOID &&
         !statement_ends_with_return(body)) {
         gcc_jit_block_end_with_void_return(block, NULL);
     }
@@ -455,7 +521,6 @@ static void compile_ast(Compiler* c, AST* ast) {
 
     Scope* scope = ast->data.block.scope;
 
-    /* Create all globals first. */
     da_foreach(statement, &ast->data.block.statements) {
         AST* node = *statement;
 
@@ -463,18 +528,16 @@ static void compile_ast(Compiler* c, AST* ast) {
             compile_global(c, node, scope);
     }
 
-    /* Register all functions and declarations before compiling bodies. */
     da_foreach(statement, &ast->data.block.statements) {
         AST* node = *statement;
 
         if (node->kind == AST_FUNCTION) {
-            compile_function(c, node, true);  // Definition (EXPORTED / T)
+            compile_function(c, node, true);
         } else if (node->kind == AST_FUNCTION_DECL) {
-            compile_function(c, node, false); // Declaration (IMPORTED / U)
+            compile_function(c, node, false);
         }
     }
 
-    /* Initialize globals after all symbols exist. */
     da_foreach(statement, &ast->data.block.statements) {
         AST* node = *statement;
 
@@ -482,7 +545,6 @@ static void compile_ast(Compiler* c, AST* ast) {
             initialize_global(c, node, scope);
     }
 
-    /* Compile function bodies. */
     da_foreach(statement, &ast->data.block.statements) {
         AST* node = *statement;
 
@@ -514,10 +576,7 @@ void compile_to_file(AST* ast, const char* path) {
     }
 
     gcc_jit_context_compile_to_file(
-        c.ctx,
-        GCC_JIT_OUTPUT_KIND_OBJECT_FILE,
-        path
-    );
+        c.ctx, GCC_JIT_OUTPUT_KIND_OBJECT_FILE, path);
 
     error = gcc_jit_context_get_first_error(c.ctx);
 

@@ -45,7 +45,9 @@ struct Pos {
     X("false", TOKEN_FALSE)                                                    \
     X("let", TOKEN_LET)                                                        \
     X("return", TOKEN_RETURN)                                                  \
-    X("if", TOKEN_IF)
+    X("if", TOKEN_IF)                                                          \
+    X("while", TOKEN_WHILE)                                                    \
+    X("else", TOKEN_ELSE)
 
 #define KV_ENUM_VALUE(_, kind) kind,
 typedef enum TokenKind {

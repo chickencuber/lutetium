@@ -1,12 +1,17 @@
 #!/usr/bin/env fish
+function cleanup --on-event fish_exit
+    rm -f ./test.o ./test
+end
+
 ninja run-dev -- main.lut
+or exit
 echo "--------------------"
-echo "compiling"
+echo "linking"
 echo "--------------------"
 gcc test.o -o test -lraylib
-rm ./test.o
+or exit
 echo "--------------------"
 echo "running"
 echo "--------------------"
 ./test
-rm ./test
+echo exited with: $status

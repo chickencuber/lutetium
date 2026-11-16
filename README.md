@@ -9,16 +9,16 @@
 - Functions
 - function arguments
 - calling c functions
+- while loops
+- if and else
 ```rust
 extern C printf(cstr);
-fn main()-> i32 {
+fn main() -> i32 {
     printf("Hello, world!");
     return 71;
 }
 ```
 
-
-Currently doesn't compile due to doing some remaking
 
 ---
 [TODO.md](./TODO.md)

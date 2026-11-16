@@ -8,6 +8,7 @@
 #include "lexer.h"
 
 int main(int argc, char** argv) {
+
     assert(argc > 1, "expected at least one arg\n");
     char* file = argv[1];
     auto fd = fopen(file, "rb");

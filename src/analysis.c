@@ -1,3 +1,4 @@
+//TASK(20261115-202733-164-n6-1d8bf5a8): make this smarter
 #include "analysis.h"
 #include "aids.h"
 #include "ast.h"
@@ -200,6 +201,34 @@ void register_function(Allocator*, AST*, Scope*);
 /* Function registration                                                     */
 /* ------------------------------------------------------------------------- */
 
+void if_stmt(Allocator* alloc, AST* ast, Scope* scope,
+             Type* return_type) {
+    AST* cond = ast->data.if_stmt.cond;
+
+    Type* actual = expression(alloc, cond, scope, NULL);
+
+    assert(type_equal(actual, &(Type){.kind = TYPE_BOOL}),
+           "if condition must be bool\n");
+
+    statement(alloc, ast->data.if_stmt.then, scope, return_type);
+
+    if (ast->data.if_stmt.el != NULL) {
+        statement(alloc, ast->data.if_stmt.el, scope, return_type);
+    }
+}
+
+void while_loop(Allocator* alloc, AST* ast, Scope* scope,
+                Type* return_type) {
+    AST* cond = ast->data.while_loop.cond;
+
+    Type* actual = expression(alloc, cond, scope, NULL);
+
+    assert(type_equal(actual, &(Type){.kind = TYPE_BOOL}),
+           "while condition must be bool\n");
+
+    statement(alloc, ast->data.while_loop.body, scope, return_type);
+}
+
 void register_function(Allocator* alloc, AST* ast, Scope* scope) {
     String name;
     Type* return_type;
@@ -369,7 +398,12 @@ void statement(Allocator* alloc, AST* ast, Scope* scope,
     case AST_FUNCTION_DECL:
         fn_decl(alloc, ast, scope);
         break;
-
+    case AST_IF:
+        if_stmt(alloc, ast, scope, return_type);
+        break;
+    case AST_WHILE:
+        while_loop(alloc, ast, scope, return_type);
+        break;
     case AST_VARIABLE_DECLARATION: {
         Type* declared = ast->data.var_decl.type;
         AST* initializer = ast->data.var_decl.val;

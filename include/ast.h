@@ -77,6 +77,8 @@ typedef enum ASTKind {
     AST_IDENT,
     AST_FUNCTION_CALL,
     AST_VARIABLE_DECLARATION,
+    AST_IF,
+    AST_WHILE,
 } ASTKind;
 
 #define ENUM(name, _) name,
@@ -103,6 +105,15 @@ struct AST {
             Type* return_type;
             ParameterList params;
         } function;
+        struct {
+            AST* cond;
+            AST* then;
+            AST* el;
+        } if_stmt;
+        struct {
+            AST* cond;
+            AST* body;
+        } while_loop;
         struct {
             String value;
         } str_lit;
