@@ -147,19 +147,64 @@ AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
         freeToken(&token);
         return n;
     }
+    case TOKEN_OPEN_PAREN: {
+        auto p = ast_parse_expr(alloc, lex);
+        consume_required(TOKEN_CLOSE_PAREN, lex);
+        freeToken(&token);
+        return p;
+    }
     default:
         panic("unknown token '" TOKEN "' at " POS "\n", FMTTOKEN(&token),
               FMTPOS(&token));
     }
 }
 
-AST* ast_parse_expr(Allocator* alloc, Lexer* lex) {
-    if (optional_token(TOKEN_OPEN_PAREN, lex)) {
-        auto p = ast_parse_expr(alloc, lex);
-        consume_required(TOKEN_CLOSE_PAREN, lex);
-        return p;
+int binop_precedence(BinOpKind op) {
+    for (int i = 0; i < PRECEDENCE_COUNT; i++) {
+        for (int j = 0; PRECEDENCE[i][j] != OP_NULL; j++) {
+            if (PRECEDENCE[i][j] == op)
+                return i;
+        }
     }
-    return ast_parse_primary_expr(alloc, lex);
+
+    // if this reaches its likely an error on my part
+    panic("binop '" TOKEN "' not defined in precedence",
+          FMTTOKENKIND(binop_to_token[op]));
+}
+
+// need it to be signed
+AST* ast_parse_binop(Allocator* alloc, Lexer* lex, int precedence) {
+    if (precedence < 0)
+        return ast_parse_primary_expr(alloc, lex);
+    AST* lhs = ast_parse_binop(alloc, lex, precedence - 1);
+    for (;;) {
+        Token tok = getToken(lex);
+        BinOpKind binop = token_to_binop[tok.kind];
+        if (binop == OP_NULL) {
+            unreadToken(tok, lex);
+            break;
+        }
+        if (binop_precedence(binop) != precedence) {
+            unreadToken(tok, lex);
+            break;
+        }
+        AST* p = ALLOC(alloc, sizeof(AST));
+        *p = (AST) {
+            SETPOS(&tok),
+           .kind = AST_BINOP,
+           .alloc = alloc,
+           .data.binop.op = binop,
+           .data.binop.lhs = lhs,
+           .data.binop.rhs = ast_parse_binop(alloc, lex, precedence-1),
+        };
+        freeToken(&tok);
+        lhs = p;
+    }
+    return lhs;
+}
+
+AST* ast_parse_expr(Allocator* alloc, Lexer* lex) {
+    return ast_parse_binop(alloc, lex, PRECEDENCE_COUNT - 1);
 }
 
 typedef struct {
@@ -579,6 +624,12 @@ void ast_display_i(AST* ast, size_t depth) {
         printf("    ");
 
     switch (ast->kind) {
+    case AST_BINOP:
+        printf("OP '" TOKEN "': " POS "\n",
+               FMTTOKENKIND(binop_to_token[ast->data.binop.op]), FMTPOS(ast));
+        ast_display_i(ast->data.binop.lhs, depth + 1);
+        ast_display_i(ast->data.binop.rhs, depth + 1);
+        break;
     case AST_WHILE:
         printf("WHILE: " POS "\n", FMTPOS(ast));
         ast_display_i(ast->data.if_stmt.cond, depth + 1);
@@ -727,6 +778,10 @@ void ast_free(AST* ast) {
     if (ast == NULL)
         return;
     switch (ast->kind) {
+    case AST_BINOP:
+        ast_free(ast->data.binop.lhs);
+        ast_free(ast->data.binop.rhs);
+        break;
     case AST_IF:
         ast_free(ast->data.if_stmt.cond);
         ast_free(ast->data.if_stmt.then);

@@ -20,6 +20,7 @@ struct Pos {
 #define TOKEN_BUFFER_SIZE 5
 
 #define OTHER_TOKEN_KINDS(X)                                                   \
+    X("IF you have this token I dont know wtf you did", TOKEN_NULL)            \
     X("EOF", TOKEN_EOF)                                                        \
     X("Ident", TOKEN_IDENT)                                                    \
     X("String", TOKEN_STR_LIT)                                                 \
@@ -36,6 +37,7 @@ struct Pos {
     X(",", TOKEN_COMMA)                                                        \
     X(":", TOKEN_COLON)                                                        \
     X("...", TOKEN_VA_ARGS)                                                    \
+    X("+", TOKEN_PLUS)                                                         \
     X("=", TOKEN_EQUALS)
 
 #define KEYWORD_LIST(X)                                                        \
@@ -52,7 +54,7 @@ struct Pos {
 #define KV_ENUM_VALUE(_, kind) kind,
 typedef enum TokenKind {
     OTHER_TOKEN_KINDS(KV_ENUM_VALUE) SYMBOL_LIST(KV_ENUM_VALUE)
-        KEYWORD_LIST(KV_ENUM_VALUE)
+        KEYWORD_LIST(KV_ENUM_VALUE) TOKEN_COUNT,
 } TokenKind;
 #undef KV_ENUM_VALUE
 

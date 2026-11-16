@@ -1,33 +1,6 @@
-extern C fn InitWindow(i32, i32, cstr);
-extern C fn WindowShouldClose() -> bool;
-extern C fn BeginDrawing();
-extern C fn EndDrawing();
-extern C fn CloseWindow();
-extern C fn DrawText(cstr, i32, i32, i32, u32);
-extern C fn ClearBackground(u32);
 extern C fn printf(cstr, ...);
 
-fn exited () -> void: printf("exited\n");
-
 fn main() -> i32 {
-    let screenWidth = 800;
-    let screenHeight = 450;
-
-    InitWindow(screenWidth, screenHeight, "raylib hello from Lutetium");
-
-    while true {
-        if WindowShouldClose() { // '!' and break dont exist yet
-            CloseWindow();
-            exited();
-            return 0;
-        }
-        BeginDrawing();
-
-            ClearBackground(4294967295); //hex doesn't exist yet
-
-            DrawText("Lutetiums first window", 190, 200, 20, 4278190080);
-
-        EndDrawing();
-    }
-    return 0; //compiler is too dumb to realize it doesn't need this 
+    printf("%d\n", 1+1);
+    return 0;
 }

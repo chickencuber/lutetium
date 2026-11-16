@@ -27,6 +27,33 @@ void free_scope(Scope*);
 typedef enum TypeKind { TYPE_KIND(ENUM) } TypeKind;
 #undef ENUM
 
+#define BINOP_KIND(X)                                                          \
+    X(TOKEN_NULL, OP_NULL)                                                     \
+    X(TOKEN_PLUS, OP_ADD)                                                      \
+    X(TOKEN_STAR, OP_MUL)
+
+#define ENUM(_, value) value,
+typedef enum { BINOP_KIND(ENUM) } BinOpKind;
+#undef ENUM
+
+#define OPERATORS(...)                                                         \
+    (BinOpKind[]) { __VA_ARGS__ __VA_OPT__(, ) OP_NULL }
+
+#define PRECEDENCE_COUNT (int)(sizeof(PRECEDENCE) / sizeof(BinOpKind*))
+//took this idea for operator precedence from https://github.com/bext-lang/b
+static const BinOpKind* PRECEDENCE[] = {
+    OPERATORS(OP_MUL),
+    OPERATORS(OP_ADD),
+};
+
+#define TOKEN_MAP(token, op) [token] = op,
+static const BinOpKind token_to_binop[TOKEN_COUNT] = {BINOP_KIND(TOKEN_MAP)};
+#undef TOKEN_MAP
+
+#define TOKEN_MAP(token, op) [op] = token,
+static const TokenKind binop_to_token[] = {BINOP_KIND(TOKEN_MAP)};
+#undef TOKEN_MAP
+
 #define FN_CONV_KIND(X)                                                        \
     X("lut", CONV_LUT)                                                         \
     X("C", CONV_C)
@@ -79,6 +106,7 @@ typedef enum ASTKind {
     AST_VARIABLE_DECLARATION,
     AST_IF,
     AST_WHILE,
+    AST_BINOP,
 } ASTKind;
 
 #define ENUM(name, _) name,
@@ -93,6 +121,11 @@ struct AST {
     size_t line, col;
     Type* type; // filled during semantic analysis
     union {
+        struct {
+            AST* lhs;
+            AST* rhs;
+            BinOpKind op;
+        } binop;
         struct {
             String name;
             AST* val; // nulled out will be uninitialized

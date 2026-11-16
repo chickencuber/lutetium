@@ -17,10 +17,12 @@ int main(int argc, char** argv) {
 
     Lexer lexer = createLexer(fd, &DEFAULT_ALLOCATOR);
     AST* ast = ast_parse_toplevel(&DEFAULT_ALLOCATOR, &lexer);
+
+    ast_display(ast);
     freeLexer(&lexer);
     fclose(fd);
     analyze(ast);
-    ast_display(ast);
+    // ast_display(ast);
 
     compile_to_file(ast, "test.o");
     ast_free(ast);
