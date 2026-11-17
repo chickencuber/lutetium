@@ -1,6 +1,7 @@
 #include "compile.h"
 #include "aids.h"
 #include "analysis.h"
+#include "ast.h"
 
 #include <libgccjit.h>
 #include <stdio.h>
@@ -50,6 +51,8 @@ static gcc_jit_type* compile_type(Compiler* c, Type* type) {
         return gcc_jit_context_get_type(c->ctx, GCC_JIT_TYPE_INT32_T);
     case TYPE_I64:
         return gcc_jit_context_get_type(c->ctx, GCC_JIT_TYPE_INT64_T);
+    case TYPE_I128:
+        return gcc_jit_context_get_type(c->ctx, GCC_JIT_TYPE_INT128_T);
 
     case TYPE_U8:
         return gcc_jit_context_get_type(c->ctx, GCC_JIT_TYPE_UINT8_T);
@@ -59,6 +62,8 @@ static gcc_jit_type* compile_type(Compiler* c, Type* type) {
         return gcc_jit_context_get_type(c->ctx, GCC_JIT_TYPE_UINT32_T);
     case TYPE_U64:
         return gcc_jit_context_get_type(c->ctx, GCC_JIT_TYPE_UINT64_T);
+    case TYPE_U128:
+        return gcc_jit_context_get_type(c->ctx, GCC_JIT_TYPE_UINT128_T);
 
     case TYPE_BOOL:
         return gcc_jit_context_get_type(c->ctx, GCC_JIT_TYPE_BOOL);
@@ -208,6 +213,15 @@ static gcc_jit_lvalue* compile_lvalue(Compiler* c, AST* ast, Scope* scope) {
 
         return lvalue;
     }
+    case AST_UNOP:
+        if (ast->data.unop.op == UP_DEREF) {
+            gcc_jit_rvalue* pointer =
+                compile_expression(c, ast->data.unop.operand, scope, NULL);
+
+            return gcc_jit_rvalue_dereference(pointer, NULL);
+        }
+        assert(false, "unary expression is not an lvalue\n");
+        return NULL;
 
     default:
         assert(false, "unsupported lvalue in compile_lvalue\n");
@@ -223,13 +237,40 @@ static gcc_jit_rvalue* compile_expression(Compiler* c, AST* ast, Scope* scope,
     case AST_UNOP: {
         AST* operand = ast->data.unop.operand;
 
-        gcc_jit_rvalue* value = compile_expression(c, operand, scope, block);
-
         switch (ast->data.unop.op) {
-        case UP_LNOT:
+        case UP_REF: {
+            gcc_jit_lvalue* lvalue = compile_lvalue(c, operand, scope);
+
+            return gcc_jit_lvalue_get_address(lvalue, NULL);
+        }
+
+        case UP_DEREF: {
+            gcc_jit_lvalue* lvalue = compile_lvalue(c, ast, scope);
+
+            return gcc_jit_lvalue_as_rvalue(lvalue);
+        }
+
+        case UP_LNOT: {
+            gcc_jit_rvalue* value =
+                compile_expression(c, operand, scope, block);
+
             return gcc_jit_context_new_unary_op(
                 c->ctx, NULL, GCC_JIT_UNARY_OP_LOGICAL_NEGATE,
                 compile_type(c, ast->type), value);
+        }
+
+        case UP_NEG: {
+            gcc_jit_rvalue* value =
+                compile_expression(c, operand, scope, block);
+
+            return gcc_jit_context_new_unary_op(
+                c->ctx, NULL, GCC_JIT_UNARY_OP_MINUS,
+                compile_type(c, ast->type), value);
+        }
+
+        case UP_POS:
+            return compile_expression(c, operand, scope, block);
+
         default:
             assert(false, "unsupported unary operator in codegen\n");
             return NULL;

@@ -16,10 +16,12 @@ void free_scope(Scope*);
     X("i16", TYPE_I16)                                                         \
     X("i32", TYPE_I32)                                                         \
     X("i64", TYPE_I64)                                                         \
+    X("i128", TYPE_I128)                                                       \
     X("u8", TYPE_U8)                                                           \
     X("u16", TYPE_U16)                                                         \
     X("u32", TYPE_U32)                                                         \
     X("u64", TYPE_U64)                                                         \
+    X("u128", TYPE_U128)                                                       \
     X("cstr", TYPE_CSTR)                                                       \
     X("bool", TYPE_BOOL)
 
@@ -30,7 +32,11 @@ typedef enum TypeKind { TYPE_KIND(ENUM) } TypeKind;
 // TOKEN, op, postfix
 #define UNOP_KIND(X)                                                           \
     X(TOKEN_NULL, UP_NULL, false)                                              \
-    X(TOKEN_EXC, UP_LNOT, false)
+    X(TOKEN_EXC, UP_LNOT, false)                                               \
+    X(TOKEN_MINUS, UP_NEG, false)                                              \
+    X(TOKEN_PLUS, UP_POS, false)                                               \
+    X(TOKEN_STAR, UP_DEREF, false)                                             \
+    X(TOKEN_BAND, UP_REF, false)
 
 #define ENUM(_, value, __) value,
 typedef enum { UNOP_KIND(ENUM) } UnOpKind;
@@ -50,28 +56,28 @@ static const TokenKind unop_to_token[] = {UNOP_KIND(TOKEN_MAP)};
 #undef TOKEN_MAP
 
 #define BINOP_KIND(X)                                                          \
-    X(TOKEN_NULL, OP_NULL)                                                     \
-    X(TOKEN_PLUS, OP_ADD)                                                      \
-    X(TOKEN_SLASH, OP_DIV)                                                     \
-    X(TOKEN_PER, OP_MOD)                                                       \
-    X(TOKEN_MINUS, OP_SUB)                                                     \
-    X(TOKEN_SHL, OP_SHL)                                                       \
-    X(TOKEN_SHR, OP_SHR)                                                       \
-    X(TOKEN_LT, OP_LT)                                                         \
-    X(TOKEN_GT, OP_GT)                                                         \
-    X(TOKEN_LE, OP_LE)                                                         \
-    X(TOKEN_GE, OP_GE)                                                         \
-    X(TOKEN_NE, OP_NE)                                                         \
-    X(TOKEN_EQ, OP_EQ)                                                         \
-    X(TOKEN_STAR, OP_MUL)                                                      \
-    X(TOKEN_BAND, OP_BAND)                                                     \
-    X(TOKEN_PIPE, OP_BOR)                                                      \
-    X(TOKEN_CARET, OP_XOR)                                                     \
-    X(TOKEN_LAND, OP_LAND)                                                     \
-    X(TOKEN_OR, OP_LOR)                                                        \
-    X(TOKEN_EQUALS, OP_ASSIGN)
+    X(TOKEN_NULL, OP_NULL, false)                                              \
+    X(TOKEN_PLUS, OP_ADD, false)                                               \
+    X(TOKEN_SLASH, OP_DIV, false)                                              \
+    X(TOKEN_PER, OP_MOD, false)                                                \
+    X(TOKEN_MINUS, OP_SUB, false)                                              \
+    X(TOKEN_SHL, OP_SHL, false)                                                \
+    X(TOKEN_SHR, OP_SHR, false)                                                \
+    X(TOKEN_LT, OP_LT, false)                                                  \
+    X(TOKEN_GT, OP_GT, false)                                                  \
+    X(TOKEN_LE, OP_LE, false)                                                  \
+    X(TOKEN_GE, OP_GE, false)                                                  \
+    X(TOKEN_NE, OP_NE, false)                                                  \
+    X(TOKEN_EQ, OP_EQ, false)                                                  \
+    X(TOKEN_STAR, OP_MUL, false)                                               \
+    X(TOKEN_BAND, OP_BAND, false)                                              \
+    X(TOKEN_PIPE, OP_BOR, false)                                               \
+    X(TOKEN_CARET, OP_XOR, false)                                              \
+    X(TOKEN_LAND, OP_LAND, false)                                              \
+    X(TOKEN_OR, OP_LOR, false)                                                 \
+    X(TOKEN_EQUALS, OP_ASSIGN, true)
 
-#define ENUM(_, value) value,
+#define ENUM(_, value, __) value,
 typedef enum { BINOP_KIND(ENUM) } BinOpKind;
 #undef ENUM
 
@@ -94,11 +100,17 @@ static const BinOpKind* PRECEDENCE[] = {
     OPERATORS(OP_ASSIGN),
 };
 
-#define TOKEN_MAP(token, op) [token] = op,
-static const BinOpKind token_to_binop[TOKEN_COUNT] = {BINOP_KIND(TOKEN_MAP)};
+typedef struct Binop Binop;
+struct Binop {
+    BinOpKind kind;
+    bool rhs;
+};
+
+#define TOKEN_MAP(token, op, rhs) [token] = (Binop){op, rhs},
+static const Binop token_to_binop[TOKEN_COUNT] = {BINOP_KIND(TOKEN_MAP)};
 #undef TOKEN_MAP
 
-#define TOKEN_MAP(token, op) [op] = token,
+#define TOKEN_MAP(token, op, _) [op] = token,
 static const TokenKind binop_to_token[] = {BINOP_KIND(TOKEN_MAP)};
 #undef TOKEN_MAP
 
@@ -227,7 +239,7 @@ struct AST {
         } expr_stmt;
 
         struct {
-            u64 value;
+            u128 value;
         } int_literal;
 
         struct {

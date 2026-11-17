@@ -6,6 +6,20 @@ AST* ast_parse_stmt(Allocator* alloc, Lexer* lexl);
 ParameterList parse_params(Allocator* alloc, Lexer* lex, bool* variadic,
                            bool optional_name);
 
+void printu128(u128 i) {
+    char buf[40];
+    size_t pos = sizeof(buf);
+
+    buf[--pos] = '\0';
+
+    do {
+        buf[--pos] = (char)('0' + i % 10);
+        i /= 10;
+    } while (i);
+
+    printf("%s", &buf[pos]);
+}
+
 Token require_token(TokenKind token_kind, Lexer* lex) {
     Token token = getToken(lex);
     assert(token.kind == token_kind,
@@ -61,13 +75,41 @@ AST* ast_parse_unop(Allocator* alloc, Lexer* lex) {
     return n;
 }
 
+u128 strtou128(const char* str, char** end, int base) {
+    __uint128_t value = 0;
+
+    while (*str) {
+        unsigned digit;
+
+        if (*str >= '0' && *str <= '9')
+            digit = (unsigned)*str - '0';
+        else if (*str >= 'a' && *str <= 'z')
+            digit = (unsigned)*str - 'a' + 10;
+        else if (*str >= 'A' && *str <= 'Z')
+            digit = (unsigned)*str - 'A' + 10;
+        else
+            break;
+
+        if (digit >= (unsigned)base)
+            break;
+
+        value = value * (u128)base + digit;
+        str++;
+    }
+
+    if (end)
+        *end = (char*)str;
+
+    return value;
+}
+
 AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
     Token token = getToken(lex);
     switch (token.kind) {
     case TOKEN_INT_LIT: {
         char* cstr = from_string(&token.data, &DEFAULT_ALLOCATOR);
 
-        u64 i = strtoull(cstr, NULL, token.base);
+        u128 i = strtoull(cstr, NULL, token.base);
 
         FREE(&DEFAULT_ALLOCATOR, cstr);
 
@@ -192,12 +234,14 @@ AST* ast_parse_binop(Allocator* alloc, Lexer* lex, int precedence) {
     AST* lhs = ast_parse_binop(alloc, lex, precedence - 1);
     for (;;) {
         Token tok = getToken(lex);
-        BinOpKind binop = token_to_binop[tok.kind];
-        if (binop == OP_NULL) {
+        Binop binop = token_to_binop[tok.kind];
+        if (binop.kind == OP_NULL) {
             unreadToken(tok, lex);
             break;
         }
-        if (binop_precedence(binop) != precedence) {
+        BinOpKind kind = binop.kind;
+        bool right = binop.rhs;
+        if (binop_precedence(kind) != precedence) {
             unreadToken(tok, lex);
             break;
         }
@@ -206,9 +250,10 @@ AST* ast_parse_binop(Allocator* alloc, Lexer* lex, int precedence) {
             SETPOS(&tok),
             .kind = AST_BINOP,
             .alloc = alloc,
-            .data.binop.op = binop,
+            .data.binop.op = kind,
             .data.binop.lhs = lhs,
-            .data.binop.rhs = ast_parse_binop(alloc, lex, precedence - 1),
+            .data.binop.rhs = ast_parse_binop(
+                alloc, lex, right ? precedence : precedence - 1),
         };
         freeToken(&tok);
         lhs = p;
@@ -761,8 +806,9 @@ void ast_display_i(AST* ast, size_t depth) {
         break;
 
     case AST_INT_LITERAL:
-        printf("Integer: %" PRIu64 ": " POS "\n", ast->data.int_literal.value,
-               FMTPOS(ast));
+        printf("Integer: ");
+        printu128(ast->data.int_literal.value);
+        printf(": " POS "\n", FMTPOS(ast));
         break;
 
     case AST_BOOL_LIT:

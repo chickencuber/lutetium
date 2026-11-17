@@ -21,7 +21,9 @@ int main(int argc, char** argv) {
     freeLexer(&lexer);
     fclose(fd);
     analyze(ast);
+#ifdef DEBUG
     ast_display(ast);
+#endif
 
     compile_to_file(ast, "test.o");
     ast_free(ast);

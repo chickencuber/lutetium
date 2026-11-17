@@ -1,7 +1,7 @@
 cc = gcc
 shared-cflags = -std=gnu23 -Wall -Wextra -Wconversion -Wshadow -Wformat=2 -Iinclude -Wno-unused-variable
 cflags = $shared-cflags -O2
-dev-cflags = $shared-cflags -g3 -O0 -fsanitize=address,undefined -fno-omit-frame-pointer
+dev-cflags = $shared-cflags -g3 -O0 -fsanitize=address,undefined -fno-omit-frame-pointer -DDEBUG=1
 
 shared-ldflags = -lgccjit
 ldflags = $shared-ldflags

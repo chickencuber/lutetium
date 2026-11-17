@@ -25,9 +25,8 @@ fn main() -> i32 {
         DrawRectangle(x, y, size, size, 0xff0000ff);
         let nx = x+vx;
         let ny = y+vy;
-        //negative doesn't exist as a unop yet
-        if (nx < 0 || nx + size > width) vx = 0-vx; else x = nx;
-        if (ny < 0 || ny + size > height) vy = 0-vy; else y = ny;
+        if (nx < 0 || nx + size > width) vx = -vx; else x = nx;
+        if (ny < 0 || ny + size > height) vy = -vy; else y = ny;
 
         EndDrawing();
     }

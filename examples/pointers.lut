@@ -1,0 +1,13 @@
+extern C fn printf(cstr, ...);
+
+fn add(i: i32*) {
+    *i = *i + 1;
+}
+
+fn main() -> i32 {
+    let i = 0;
+    printf("%d\n", i);
+    add(&i);
+    printf("%d\n", i);
+    return 0;
+}

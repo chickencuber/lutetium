@@ -22,11 +22,17 @@ typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
+typedef unsigned __int128 u128;
 
 typedef int8_t i8;
 typedef int16_t i16;
 typedef int32_t i32;
 typedef int64_t i64;
+typedef __int128 i128;
+
+#define INT128_MAX  ((__int128)(((__uint128_t)1 << 127) - 1))
+#define INT128_MIN  (-INT128_MAX - 1)
+#define UINT128_MAX ((__uint128_t)-1)
 
 #define STRING "%.*s"
 #define FMTSTRING(s) (int)(s)->len, (s)->data
