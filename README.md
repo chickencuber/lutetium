@@ -14,8 +14,9 @@
 - math
 - variables
 - mutating said variables
+- pointers
 ```rust
-extern C printf(cstr);
+extern C printf(cstr, ...);
 fn main() -> i32 {
     printf("Hello, world!");
     return 71;
