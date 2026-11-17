@@ -2,6 +2,19 @@
 #include "aids.h"
 #include <ctype.h>
 #include <stdio.h>
+static bool is_digit_base(char ch, int base) {
+    if (ch >= '0' && ch <= '9')
+        return ch - '0' < base;
+
+    if (base == 16) {
+        if (ch >= 'a' && ch <= 'f')
+            return true;
+        if (ch >= 'A' && ch <= 'F')
+            return true;
+    }
+
+    return false;
+}
 
 typedef struct Keyword Keyword;
 struct Keyword {
@@ -223,6 +236,7 @@ Token getToken(Lexer* p) {
                 unread(ch, p, pp);
             }
         }
+
         if (isalpha(ch) || ch == '_') {
             String sb = string_create(p->alloc);
             Pos pp;
@@ -249,17 +263,73 @@ Token getToken(Lexer* p) {
         if (isdigit(ch)) {
             String sb = string_create(p->alloc);
             Pos pp;
-            while (isdigit(ch)) {
+            int base = 10;
+
+            if (ch == '0') {
+                pp = read(p, &ch);
+
+                switch (ch) {
+                case 'b':
+                case 'B':
+                    base = 2;
+                    break;
+
+                case 'o':
+                case 'O':
+                    base = 8;
+                    break;
+
+                case 'x':
+                case 'X':
+                    base = 16;
+                    break;
+
+                default:
+                    unread(ch, p, pp);
+                    ch = '0';
+                    append_char(&sb, ch);
+                    pp = read(p, &ch);
+                    break;
+                }
+
+                if (base != 10)
+                    pp = read(p, &ch);
+            }
+
+            if (base != 10 && !is_digit_base(ch, base)) {
+                panic("Error: base prefix must be followed by at least one "
+                      "digit at " POS "\n",
+                      FMTPOS(&pp));
+            }
+
+            while (is_digit_base(ch, base)) {
                 append_char(&sb, ch);
                 pp = read(p, &ch);
+
+                if (ch == '_') {
+                    Pos underscore_pos = pp;
+                    pp = read(p, &ch);
+
+                    if (is_digit_base(ch, base))
+                        continue;
+
+                    unread(ch, p, pp);
+                    ch = '_';
+                    pp = underscore_pos;
+                    break;
+                }
             }
+
             unread(ch, p, pp);
+
             return (Token){
                 .data = sb,
                 SETPOS(&pos),
                 .kind = TOKEN_INT_LIT,
+                .base = base,
             };
         }
+
         if (ch == '"') {
             String sb = string_create(p->alloc);
 

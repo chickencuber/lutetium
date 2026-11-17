@@ -10,7 +10,7 @@ struct Pos {
     size_t line, col;
 };
 
-#define POS "%lu:%lu"
+#define POS "%zu:%zu"
 #define FMTPOS(p) (p)->line, (p)->col
 
 #define TOKEN "%s"
@@ -38,7 +38,25 @@ struct Pos {
     X(":", TOKEN_COLON)                                                        \
     X("...", TOKEN_VA_ARGS)                                                    \
     X("+", TOKEN_PLUS)                                                         \
-    X("=", TOKEN_EQUALS)
+    X("/", TOKEN_SLASH)                                                        \
+    X("%", TOKEN_PER)                                                          \
+    X("-", TOKEN_MINUS)                                                        \
+    X("<<", TOKEN_SHL)                                                         \
+    X(">>", TOKEN_SHR)                                                         \
+    X("<", TOKEN_LT)                                                           \
+    X(">", TOKEN_GT)                                                           \
+    X("<=", TOKEN_LE)                                                          \
+    X(">=", TOKEN_GE)                                                          \
+    X("==", TOKEN_EQ)                                                          \
+    X("!=", TOKEN_NE)                                                          \
+    X("=", TOKEN_EQUALS)                                                       \
+    X("&", TOKEN_BAND)                                                         \
+    X("|", TOKEN_PIPE)                                                         \
+    X("^", TOKEN_CARET)                                                        \
+    X("&&", TOKEN_LAND)                                                        \
+    X("||", TOKEN_OR)                                                          \
+    X("@", TOKEN_AT)                                                           \
+    X("!", TOKEN_EXC)
 
 #define KEYWORD_LIST(X)                                                        \
     X("fn", TOKEN_FN)                                                          \
@@ -79,6 +97,7 @@ struct Token {
     size_t line, col;
     String data;
     TokenKind kind;
+    int base;
 };
 
 typedef struct Lexer Lexer;

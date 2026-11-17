@@ -18,9 +18,9 @@ rule clean
     command = rm -rf build/
 
 rule run
-    command = LSAN_OPTIONS=suppressions=lsan.supp $in $$RUN_ARGS
+    command = LSAN_OPTIONS=suppressions=lsan.supp:print_suppressions=0 $in $$RUN_ARGS
 rule run-gf2
-    command = LSAN_OPTIONS=suppressions=lsan.supp gf2 $in $$RUN_ARGS
+    command = LSAN_OPTIONS=suppressions=lsan.supp:print_suppressions=0 gf2 $in $$RUN_ARGS
 
 build build/: mkdir
 build build/release: mkdir || build/

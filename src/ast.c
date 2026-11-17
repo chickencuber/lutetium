@@ -34,31 +34,44 @@ bool optional_token(TokenKind token_kind, Lexer* lex) {
     return false;
 }
 
-u64 parse_u64(Str str) {
-    u64 result = 0;
-
-    for (size_t i = 0; i < str.len; i++) {
-        char c = str.data[i];
-        assert(c >= '0' && c <= '9', "invalid digit\n");
-
-        u64 digit = (u64)(c - '0');
-        assert(result <= (UINT64_MAX - digit) / 10,
-               "integer literal exceeds u64\n");
-
-        result = result * 10 + digit;
-    }
-
-    return result;
-}
-
 AST* ast_parse_expr(Allocator* alloc, Lexer* lex);
+AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex);
+
+AST* ast_parse_unop(Allocator* alloc, Lexer* lex) {
+    Token token = getToken(lex);
+    auto unop = token_to_unop[token.kind];
+    if (unop.kind == UP_NULL)
+        panic("unknown token '" TOKEN "' at " POS "\n", FMTTOKEN(&token),
+              FMTPOS(&token));
+    bool postfix = unop.postfix;
+    UnOpKind kind = unop.kind;
+    AST* operand = ast_parse_primary_expr(alloc, lex);
+
+    AST* n = ALLOC(alloc, sizeof(AST));
+    *n = (AST){
+        SETPOS(&token),
+        .alloc = alloc,
+        .kind = AST_UNOP,
+        .data.unop.postfix = postfix,
+        .data.unop.operand = operand,
+        .data.unop.op = kind,
+    };
+
+    freeToken(&token);
+    return n;
+}
 
 AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
     Token token = getToken(lex);
     switch (token.kind) {
     case TOKEN_INT_LIT: {
         Str num = string_slice(&token.data);
-        u64 i = parse_u64(num);
+        char* cstr = from_string(&token.data, &DEFAULT_ALLOCATOR);
+
+        u64 i = strtoull(cstr, NULL, token.base);
+
+        FREE(&DEFAULT_ALLOCATOR, cstr);
+
         AST* n = ALLOC(alloc, sizeof(AST));
         *n = (AST){
             SETPOS(&token),
@@ -66,6 +79,7 @@ AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
             .alloc = alloc,
             .kind = AST_INT_LITERAL,
         };
+
         freeToken(&token);
         return n;
     }
@@ -154,8 +168,8 @@ AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
         return p;
     }
     default:
-        panic("unknown token '" TOKEN "' at " POS "\n", FMTTOKEN(&token),
-              FMTPOS(&token));
+        unreadToken(token, lex);
+        return ast_parse_unop(alloc, lex);
     }
 }
 
@@ -189,13 +203,13 @@ AST* ast_parse_binop(Allocator* alloc, Lexer* lex, int precedence) {
             break;
         }
         AST* p = ALLOC(alloc, sizeof(AST));
-        *p = (AST) {
+        *p = (AST){
             SETPOS(&tok),
-           .kind = AST_BINOP,
-           .alloc = alloc,
-           .data.binop.op = binop,
-           .data.binop.lhs = lhs,
-           .data.binop.rhs = ast_parse_binop(alloc, lex, precedence-1),
+            .kind = AST_BINOP,
+            .alloc = alloc,
+            .data.binop.op = binop,
+            .data.binop.lhs = lhs,
+            .data.binop.rhs = ast_parse_binop(alloc, lex, precedence - 1),
         };
         freeToken(&tok);
         lhs = p;
@@ -367,6 +381,19 @@ AST* parse_extern(Allocator* alloc, Lexer* lex, Pos pos) {
     } else {
         *ret_type = (Type){.kind = TYPE_VOID, .alloc = alloc};
     }
+    String symbol = {};
+    if (optional_token(TOKEN_AT, lex)) {
+        Token attr = require_token(TOKEN_IDENT, lex);
+        assert(string_compare_cstr(attr.data, "symbol"),
+               "unknown attribute '" STRING "' at " POS "\n",
+               FMTSTRING(&attr.data), FMTPOS(&attr));
+        freeToken(&attr);
+        consume_required(TOKEN_OPEN_PAREN, lex);
+        Token str = require_token(TOKEN_STR_LIT, lex);
+        symbol = string_clone(&str.data, alloc);
+        freeToken(&str);
+        consume_required(TOKEN_CLOSE_PAREN, lex);
+    }
     consume_required(TOKEN_SEMI, lex);
     AST* p = ALLOC(alloc, sizeof(AST));
     *p = (AST){
@@ -377,6 +404,7 @@ AST* parse_extern(Allocator* alloc, Lexer* lex, Pos pos) {
         .data.function_decl.return_type = ret_type,
         .data.function_decl.va_args = va_args,
         .data.function_decl.params = params,
+        .data.function_decl.symbol = symbol,
         .data.function_decl.conv = CONV_C,
     };
     return p;
@@ -624,6 +652,13 @@ void ast_display_i(AST* ast, size_t depth) {
         printf("    ");
 
     switch (ast->kind) {
+    case AST_UNOP:
+        // TASK(20261117-000114-418-n6-72f292f8): make printing also show if its
+        // postfix
+        printf("OP '" TOKEN "': " POS "\n",
+               FMTTOKENKIND(unop_to_token[ast->data.unop.op]), FMTPOS(ast));
+        ast_display_i(ast->data.unop.operand, depth + 1);
+        break;
     case AST_BINOP:
         printf("OP '" TOKEN "': " POS "\n",
                FMTTOKENKIND(binop_to_token[ast->data.binop.op]), FMTPOS(ast));
@@ -632,11 +667,11 @@ void ast_display_i(AST* ast, size_t depth) {
         break;
     case AST_WHILE:
         printf("WHILE: " POS "\n", FMTPOS(ast));
-        ast_display_i(ast->data.if_stmt.cond, depth + 1);
+        ast_display_i(ast->data.while_loop.cond, depth + 1);
         for (size_t i = 0; i < depth; i++)
             printf("    ");
         printf("DO\n");
-        ast_display_i(ast->data.if_stmt.then, depth + 1);
+        ast_display_i(ast->data.while_loop.body, depth + 1);
         break;
     case AST_IF:
         printf("IF: " POS "\n", FMTPOS(ast));
@@ -712,7 +747,13 @@ void ast_display_i(AST* ast, size_t depth) {
 
         printf(") -> ");
         type_display(ast->data.function_decl.return_type);
-        printf(": " POS "\n", FMTPOS(ast));
+        if (ast->data.function_decl.symbol.data == NULL) {
+            printf(" @symbol(\"" STRING "\"): " POS "\n",
+                   FMTSTRING(&ast->data.function_decl.name), FMTPOS(ast));
+        } else {
+            printf(" @symbol(\"" STRING "\"): " POS "\n",
+                   FMTSTRING(&ast->data.function_decl.symbol), FMTPOS(ast));
+        }
         break;
 
     case AST_RETURN:
@@ -778,6 +819,9 @@ void ast_free(AST* ast) {
     if (ast == NULL)
         return;
     switch (ast->kind) {
+    case AST_UNOP:
+        ast_free(ast->data.unop.operand);
+        break;
     case AST_BINOP:
         ast_free(ast->data.binop.lhs);
         ast_free(ast->data.binop.rhs);
@@ -833,6 +877,7 @@ void ast_free(AST* ast) {
         break;
     case AST_FUNCTION_DECL:
         da_free(&ast->data.function_decl.name);
+        da_free(&ast->data.function_decl.symbol);
         da_free_call(&ast->data.function_decl.params, b, {
             da_free(&b->name);
             type_free(b->type);

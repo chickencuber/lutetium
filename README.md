@@ -11,6 +11,9 @@
 - calling c functions
 - while loops
 - if and else
+- math
+- variables
+- mutating said variables
 ```rust
 extern C printf(cstr);
 fn main() -> i32 {

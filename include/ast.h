@@ -27,10 +27,49 @@ void free_scope(Scope*);
 typedef enum TypeKind { TYPE_KIND(ENUM) } TypeKind;
 #undef ENUM
 
+// TOKEN, op, postfix
+#define UNOP_KIND(X)                                                           \
+    X(TOKEN_NULL, UP_NULL, false)                                              \
+    X(TOKEN_EXC, UP_LNOT, false)
+
+#define ENUM(_, value, __) value,
+typedef enum { UNOP_KIND(ENUM) } UnOpKind;
+#undef ENUM
+
+typedef struct Unop Unop;
+struct Unop {
+    UnOpKind kind;
+    bool postfix;
+};
+#define TOKEN_MAP(token, op, postfix) [token] = (Unop){op, postfix},
+static const Unop token_to_unop[TOKEN_COUNT] = {UNOP_KIND(TOKEN_MAP)};
+#undef TOKEN_MAP
+
+#define TOKEN_MAP(token, op, _) [op] = token,
+static const TokenKind unop_to_token[] = {UNOP_KIND(TOKEN_MAP)};
+#undef TOKEN_MAP
+
 #define BINOP_KIND(X)                                                          \
     X(TOKEN_NULL, OP_NULL)                                                     \
     X(TOKEN_PLUS, OP_ADD)                                                      \
-    X(TOKEN_STAR, OP_MUL)
+    X(TOKEN_SLASH, OP_DIV)                                                     \
+    X(TOKEN_PER, OP_MOD)                                                       \
+    X(TOKEN_MINUS, OP_SUB)                                                     \
+    X(TOKEN_SHL, OP_SHL)                                                       \
+    X(TOKEN_SHR, OP_SHR)                                                       \
+    X(TOKEN_LT, OP_LT)                                                         \
+    X(TOKEN_GT, OP_GT)                                                         \
+    X(TOKEN_LE, OP_LE)                                                         \
+    X(TOKEN_GE, OP_GE)                                                         \
+    X(TOKEN_NE, OP_NE)                                                         \
+    X(TOKEN_EQ, OP_EQ)                                                         \
+    X(TOKEN_STAR, OP_MUL)                                                      \
+    X(TOKEN_BAND, OP_BAND)                                                     \
+    X(TOKEN_PIPE, OP_BOR)                                                      \
+    X(TOKEN_CARET, OP_XOR)                                                     \
+    X(TOKEN_LAND, OP_LAND)                                                     \
+    X(TOKEN_OR, OP_LOR)                                                        \
+    X(TOKEN_EQUALS, OP_ASSIGN)
 
 #define ENUM(_, value) value,
 typedef enum { BINOP_KIND(ENUM) } BinOpKind;
@@ -40,10 +79,19 @@ typedef enum { BINOP_KIND(ENUM) } BinOpKind;
     (BinOpKind[]) { __VA_ARGS__ __VA_OPT__(, ) OP_NULL }
 
 #define PRECEDENCE_COUNT (int)(sizeof(PRECEDENCE) / sizeof(BinOpKind*))
-//took this idea for operator precedence from https://github.com/bext-lang/b
+// took this idea for operator precedence from https://github.com/bext-lang/b
 static const BinOpKind* PRECEDENCE[] = {
-    OPERATORS(OP_MUL),
-    OPERATORS(OP_ADD),
+    OPERATORS(OP_MUL, OP_MOD, OP_DIV),
+    OPERATORS(OP_ADD, OP_SUB),
+    OPERATORS(OP_SHL, OP_SHR),
+    OPERATORS(OP_LT, OP_GT, OP_GE, OP_LE),
+    OPERATORS(OP_NE, OP_EQ),
+    OPERATORS(OP_BAND),
+    OPERATORS(OP_XOR),
+    OPERATORS(OP_BOR),
+    OPERATORS(OP_LAND),
+    OPERATORS(OP_LOR),
+    OPERATORS(OP_ASSIGN),
 };
 
 #define TOKEN_MAP(token, op) [token] = op,
@@ -107,6 +155,7 @@ typedef enum ASTKind {
     AST_IF,
     AST_WHILE,
     AST_BINOP,
+    AST_UNOP,
 } ASTKind;
 
 #define ENUM(name, _) name,
@@ -121,6 +170,11 @@ struct AST {
     size_t line, col;
     Type* type; // filled during semantic analysis
     union {
+        struct {
+            AST* operand;
+            UnOpKind op;
+            bool postfix;
+        } unop;
         struct {
             AST* lhs;
             AST* rhs;
@@ -156,6 +210,7 @@ struct AST {
             String name;
             Type* return_type;
             ParameterList params; // optional name this time
+            String symbol;
             FnConv conv;
             bool va_args;
         } function_decl;

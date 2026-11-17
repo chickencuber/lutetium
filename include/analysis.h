@@ -5,6 +5,7 @@
 typedef struct Symbol Symbol;
 struct Symbol {
     Type* type;
+    String mangled;
     void* compiler_data;
 };
 typedef HM(String, Symbol) Symbols;
