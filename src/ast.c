@@ -65,7 +65,6 @@ AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
     Token token = getToken(lex);
     switch (token.kind) {
     case TOKEN_INT_LIT: {
-        Str num = string_slice(&token.data);
         char* cstr = from_string(&token.data, &DEFAULT_ALLOCATOR);
 
         u64 i = strtoull(cstr, NULL, token.base);
