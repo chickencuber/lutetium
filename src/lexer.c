@@ -239,7 +239,7 @@ Token getToken(Lexer* p) {
 
         if (isalpha(ch) || ch == '_') {
             String sb = string_create(p->alloc);
-            Pos pp;
+            Pos pp = {};
             while (isalnum(ch) || ch == '_') {
                 append_char(&sb, ch);
 
@@ -262,7 +262,7 @@ Token getToken(Lexer* p) {
         // TASK(20261112-003526-307-n6-b2f02461): allow '_' between digits
         if (isdigit(ch)) {
             String sb = string_create(p->alloc);
-            Pos pp;
+            Pos pp = {};
             int base = 10;
 
             if (ch == '0') {
