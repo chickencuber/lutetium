@@ -16,7 +16,7 @@
 - mutating said variables
 - pointers
 ```rust
-extern C printf(cstr, ...);
+extern C fn printf(cstr, ...);
 fn main() -> i32 {
     printf("Hello, world!");
     return 71;
