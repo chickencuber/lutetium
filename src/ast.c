@@ -109,7 +109,7 @@ AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
     case TOKEN_INT_LIT: {
         char* cstr = from_string(&token.data, &DEFAULT_ALLOCATOR);
 
-        u128 i = strtoull(cstr, NULL, token.base);
+        u128 i = strtou128(cstr, NULL, token.base);
 
         FREE(&DEFAULT_ALLOCATOR, cstr);
 
