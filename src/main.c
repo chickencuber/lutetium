@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
     char* output;
     if (out->len == 0) {
         String s = str_without_extension(*file, &DEFAULT_ALLOCATOR);
-        append_cstr(&s, ".0");
+        append_cstr(&s, ".o");
         output = from_string(&s, &DEFAULT_ALLOCATOR);
         da_free(&s);
     } else {
