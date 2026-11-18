@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
     parseArgs(parser, argc,argv);
     char* output;
     if(out->len == 0) {
-        String s = str_without_extension(*out, &DEFAULT_ALLOCATOR);
+        String s = str_without_extension(*file, &DEFAULT_ALLOCATOR);
         append_cstr(&s, ".0");
         output = from_string(&s, &DEFAULT_ALLOCATOR);
         da_free(&s);
