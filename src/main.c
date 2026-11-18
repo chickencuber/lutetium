@@ -6,8 +6,8 @@
 #include "analysis.h"
 #include "ast.h"
 #include "compile.h"
-#include <stdio.h>
 #include "lexer.h"
+#include <stdio.h>
 
 String str_without_extension(Str s, Allocator* alloc) {
     size_t end = s.len;
@@ -33,13 +33,16 @@ String str_without_extension(Str s, Allocator* alloc) {
 }
 
 int main(int argc, char** argv) {
-    auto parser = initArgParser(&DEFAULT_ALLOCATOR, "lutc", "Compiler for lutetium", "Happy coding!");
+    auto parser = initArgParser(&DEFAULT_ALLOCATOR, "lutc",
+                                "Compiler for lutetium", "Happy coding!");
     argHelp(parser);
     Str* file = argString(parser, "file", "the input file");
     Str* out = argOption(parser, "output", "o", "the output file");
-    parseArgs(parser, argc,argv);
+    bool* dump_ast =
+        argFlag(parser, "dump-ast", "a", .desc = "Dump the parsed AST");
+    parseArgs(parser, argc, argv);
     char* output;
-    if(out->len == 0) {
+    if (out->len == 0) {
         String s = str_without_extension(*file, &DEFAULT_ALLOCATOR);
         append_cstr(&s, ".0");
         output = from_string(&s, &DEFAULT_ALLOCATOR);
@@ -50,9 +53,8 @@ int main(int argc, char** argv) {
 
     char* f = str_to_cstr(*file, &DEFAULT_ALLOCATOR);
     auto fd = fopen(f, "rb");
-    assert(fd != NULL, "could not open "STRING"\n", FMTSTRING(file));
+    assert(fd != NULL, "could not open " STRING "\n", FMTSTRING(file));
     FREE(&DEFAULT_ALLOCATOR, f);
-
 
     Lexer lexer = createLexer(fd, &DEFAULT_ALLOCATOR);
     AST* ast = ast_parse_toplevel(&DEFAULT_ALLOCATOR, &lexer);
@@ -60,9 +62,9 @@ int main(int argc, char** argv) {
     freeLexer(&lexer);
     fclose(fd);
     analyze(ast);
-#ifdef DEBUG
-    ast_display(ast);
-#endif
+
+    if (*dump_ast)
+        ast_display(ast);
 
     compile_to_file(ast, output);
     FREE(&DEFAULT_ALLOCATOR, output);

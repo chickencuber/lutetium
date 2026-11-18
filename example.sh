@@ -16,11 +16,13 @@ if [[ -z "$1" ]]; then
 fi
 
 target="run"
+dump=""
 if [[ "$2" == "dev" ]]; then
     target="run-dev"
+    dump="-a"
 fi
 
-export RUN_ARGS="./examples/$1.lut -o test.o"
+export RUN_ARGS="./examples/$1.lut -o test.o $dump"
 
 ninja "$target" || exit
 
