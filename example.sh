@@ -20,7 +20,7 @@ if [[ "$2" == "dev" ]]; then
     target="run-dev"
 fi
 
-export RUN_ARGS="./examples/$1.lut"
+export RUN_ARGS="./examples/$1.lut -o test.o"
 
 ninja "$target" || exit
 

@@ -812,8 +812,8 @@ void ast_display_i(AST* ast, size_t depth) {
         break;
 
     case AST_BOOL_LIT:
-        printf("BOOL: %s: " POS "\n",
-               ast->data.bool_lit.value ? "true" : "false", FMTPOS(ast));
+        printf("BOOL: " BOOL ": " POS "\n", FMTBOOL(ast->data.bool_lit.value),
+               FMTPOS(ast));
         break;
 
     case AST_IDENT:
