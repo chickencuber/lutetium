@@ -1,10 +1,19 @@
 #pragma once
-#include "ast.h"
 #include "aids.h"
+#include "ast.h"
+
+typedef enum {
+    SYMBOL_VALUE,
+    SYMBOL_TYPE,
+} SymbolKind;
 
 typedef struct Symbol Symbol;
 struct Symbol {
-    Type* type;
+    SymbolKind kind;
+    union {
+        Type* type;
+        ParameterList* params;
+    } data;
     String mangled;
     void* compiler_data;
 };

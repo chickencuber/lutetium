@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
 
     freeLexer(&lexer);
     fclose(fd);
+
     analyze(ast);
 
     if (*dump_ast)
@@ -70,5 +71,6 @@ int main(int argc, char** argv) {
     FREE(&DEFAULT_ALLOCATOR, output);
     ast_free(ast);
     freeArgParser(parser);
+    
     return 0;
 }

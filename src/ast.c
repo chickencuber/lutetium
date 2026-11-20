@@ -38,9 +38,11 @@ void consume_required(TokenKind kind, Lexer* lex) {
     freeToken(&token);
 }
 
-bool optional_token(TokenKind token_kind, Lexer* lex) {
+bool optional_token(TokenKind token_kind, Lexer* lex, Pos* pos) {
     Token token = getToken(lex);
     if (token.kind == token_kind) {
+        if (pos != NULL)
+            *pos = ASPOS(&token);
         freeToken(&token);
         return true;
     }
@@ -50,7 +52,41 @@ bool optional_token(TokenKind token_kind, Lexer* lex) {
 
 AST* ast_parse_expr(Allocator* alloc, Lexer* lex);
 AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex);
+StructInitializerFields* parse_struct_initializer_fields(Allocator* alloc,
+                                                         Lexer* lex) {
+    StructInitializerFields* fields =
+        ALLOC(alloc, sizeof(StructInitializerFields));
+    da_init(fields, alloc);
 
+    while (peekToken(lex).kind != TOKEN_CLOSE_BRACE) {
+        Pos pos = {0};
+
+        consume_required(TOKEN_DOT, lex);
+
+        Token ident = getToken(lex);
+
+        assert(ident.kind == TOKEN_IDENT, "expected field name at " POS "\n",
+               FMTPOS(&ident));
+
+        String name = string_clone(&ident.data, alloc);
+        freeToken(&ident);
+
+        consume_required(TOKEN_EQUALS, lex);
+
+        AST* value = ast_parse_expr(alloc, lex);
+
+        da_append(fields, ((StructInitializerField){
+                              .name = name,
+                              .value = value,
+                          }));
+
+        if (!optional_token(TOKEN_COMMA, lex, &pos))
+            break;
+    }
+    consume_required(TOKEN_CLOSE_BRACE, lex);
+
+    return fields;
+}
 AST* ast_parse_unop(Allocator* alloc, Lexer* lex) {
     Token token = getToken(lex);
     auto unop = token_to_unop[token.kind];
@@ -136,7 +172,7 @@ AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
         return n;
     }
     case TOKEN_IDENT: {
-        if (optional_token(TOKEN_OPEN_PAREN, lex)) {
+        if (optional_token(TOKEN_OPEN_PAREN, lex, NULL)) {
             ASTList args = {0};
             da_init(&args, alloc);
             for (;;) {
@@ -176,6 +212,30 @@ AST* ast_parse_primary_expr(Allocator* alloc, Lexer* lex) {
             };
             freeToken(&token);
             return n;
+        } else if (optional_token(TOKEN_OPEN_BRACE, lex, NULL)) {
+            AST* n = ALLOC(alloc, sizeof(AST));
+            if (optional_token(TOKEN_CLOSE_BRACE, lex, NULL)) {
+                *n = (AST){
+                    SETPOS(&token),
+                    .data.struct_init.name = string_clone(&token.data, alloc),
+                    .data.struct_init.fields = NULL,
+                    .alloc = alloc,
+                    .kind = AST_STRUCT_INIT,
+                };
+                freeToken(&token);
+                return n;
+            } else {
+                auto fields = parse_struct_initializer_fields(alloc, lex);
+                *n = (AST){
+                    SETPOS(&token),
+                    .data.struct_init.name = string_clone(&token.data, alloc),
+                    .data.struct_init.fields = fields,
+                    .alloc = alloc,
+                    .kind = AST_STRUCT_INIT,
+                };
+                freeToken(&token);
+                return n;
+            }
         } else {
             AST* n = ALLOC(alloc, sizeof(AST));
             *n = (AST){
@@ -279,17 +339,17 @@ Type parse_type(Allocator* alloc, Lexer* lex) {
     Type type = {
         .alloc = alloc,
     };
-    bool found = false;
     if (token.kind == TOKEN_IDENT) {
         fa_foreach(d, BUILTIN_TYPES) {
             if (string_compare_cstr(token.data, d->name)) {
                 type.kind = d->kind;
-                found = true;
-                break;
+                goto end;
             }
         }
+        type.data.user_defined.name = string_clone(&token.data, alloc);
+        type.kind = TYPE_USER_DEFINED;
+    end:
     } else if (token.kind == TOKEN_FN) {
-        found = true;
         Token conv = getToken(lex);
         FnConv convention;
         if (conv.kind == TOKEN_IDENT && string_compare_cstr(conv.data, "C")) {
@@ -304,7 +364,7 @@ Type parse_type(Allocator* alloc, Lexer* lex) {
         ParameterList params = parse_params(
             alloc, lex, convention == CONV_C ? &variadic : NULL, true);
         Type* ret_type = ALLOC(alloc, sizeof(Type));
-        if (optional_token(TOKEN_ARROW, lex)) {
+        if (optional_token(TOKEN_ARROW, lex, NULL)) {
             *ret_type = parse_type(alloc, lex);
         } else {
             *ret_type = (Type){.kind = TYPE_VOID, .alloc = alloc};
@@ -317,14 +377,11 @@ Type parse_type(Allocator* alloc, Lexer* lex) {
             .va_args = variadic,
         };
     } else if (token.kind == TOKEN_OPEN_PAREN) {
-        found = true;
         type = parse_type(alloc, lex);
         consume_required(TOKEN_CLOSE_PAREN, lex);
     }
-    assert(found, "unknown type '" STRING "' at " POS "\n",
-           FMTSTRING(&token.data), FMTPOS(&token));
     freeToken(&token);
-    while (optional_token(TOKEN_STAR, lex)) {
+    while (optional_token(TOKEN_STAR, lex, NULL)) {
         Type* temp = ALLOC(alloc, sizeof(Type));
         *temp = type;
         type.kind = TYPE_POINTER;
@@ -343,9 +400,14 @@ ParameterList parse_params(Allocator* alloc, Lexer* lex, bool* variadic,
         *variadic = false;
 
     while (peekToken(lex).kind != TOKEN_CLOSE_PAREN) {
-        if (optional_token(TOKEN_VA_ARGS, lex)) {
-            assert(variadic,
-                   "variadic parameters are only allowed in C declarations\n");
+        Pos pos;
+        if (optional_token(TOKEN_VA_ARGS, lex, &pos)) {
+            assert(
+                variadic,
+                "variadic parameters are only allowed in C declarations at " POS
+                "\n",
+                FMTPOS(&pos));
+
             *variadic = true;
             break;
         }
@@ -353,11 +415,15 @@ ParameterList parse_params(Allocator* alloc, Lexer* lex, bool* variadic,
         Token ident = getToken(lex);
         String name = {0};
 
-        if (ident.kind == TOKEN_IDENT && optional_token(TOKEN_COLON, lex)) {
+        if (ident.kind == TOKEN_IDENT &&
+            optional_token(TOKEN_COLON, lex, NULL)) {
             name = string_clone(&ident.data, alloc);
             freeToken(&ident);
         } else {
-            assert(optional_name, "expected parameter name followed by ':'\n");
+            assert(optional_name,
+                   "expected parameter name followed by ':' at " POS "\n",
+                   FMTPOS(&ident));
+
             unreadToken(ident, lex);
         }
 
@@ -369,12 +435,42 @@ ParameterList parse_params(Allocator* alloc, Lexer* lex, bool* variadic,
                                .type = type,
                            }));
 
-        if (!optional_token(TOKEN_COMMA, lex))
+        if (!optional_token(TOKEN_COMMA, lex, NULL))
             break;
     }
 
     consume_required(TOKEN_CLOSE_PAREN, lex);
     return params;
+}
+
+ParameterList parse_struct_fields(Allocator* alloc, Lexer* lex) {
+    ParameterList fields = {0};
+    da_init(&fields, alloc);
+
+    while (peekToken(lex).kind != TOKEN_CLOSE_BRACE) {
+        Token ident = getToken(lex);
+
+        assert(ident.kind == TOKEN_IDENT, "expected field name at " POS "\n",
+               FMTPOS(&ident));
+
+        String name = string_clone(&ident.data, alloc);
+        freeToken(&ident);
+
+        consume_required(TOKEN_COLON, lex);
+
+        Type* type = ALLOC(alloc, sizeof(Type));
+        *type = parse_type(alloc, lex);
+
+        da_append(&fields, ((Parameter){
+                               .name = name,
+                               .type = type,
+                           }));
+
+        consume_required(TOKEN_SEMI, lex);
+    }
+
+    consume_required(TOKEN_CLOSE_BRACE, lex);
+    return fields;
 }
 
 AST* parse_fn(Allocator* alloc, Lexer* lex, Pos pos) {
@@ -385,12 +481,12 @@ AST* parse_fn(Allocator* alloc, Lexer* lex, Pos pos) {
     // TASK(20261112-140400-119-n6-8118a53c): add argument support
     ParameterList params = parse_params(alloc, lex, NULL, false);
     Type* ret_type = ALLOC(alloc, sizeof(Type));
-    if (optional_token(TOKEN_ARROW, lex)) {
+    if (optional_token(TOKEN_ARROW, lex, NULL)) {
         *ret_type = parse_type(alloc, lex);
     } else {
         *ret_type = (Type){.kind = TYPE_VOID, .alloc = alloc};
     }
-    optional_token(TOKEN_COLON, lex);
+    optional_token(TOKEN_COLON, lex, NULL);
     AST* p = ALLOC(alloc, sizeof(AST));
     *p = (AST){
         SETPOS(&pos),
@@ -420,13 +516,13 @@ AST* parse_extern(Allocator* alloc, Lexer* lex, Pos pos) {
     bool va_args;
     ParameterList params = parse_params(alloc, lex, &va_args, true);
     Type* ret_type = ALLOC(alloc, sizeof(Type));
-    if (optional_token(TOKEN_ARROW, lex)) {
+    if (optional_token(TOKEN_ARROW, lex, NULL)) {
         *ret_type = parse_type(alloc, lex);
     } else {
         *ret_type = (Type){.kind = TYPE_VOID, .alloc = alloc};
     }
     String symbol = {};
-    if (optional_token(TOKEN_AT, lex)) {
+    if (optional_token(TOKEN_AT, lex, NULL)) {
         Token attr = require_token(TOKEN_IDENT, lex);
         assert(string_compare_cstr(attr.data, "symbol"),
                "unknown attribute '" STRING "' at " POS "\n",
@@ -459,7 +555,7 @@ AST* parse_var_decl(Allocator* alloc, Lexer* lex, Pos pos) {
     String name = string_clone(&ident.data, alloc);
     freeToken(&ident);
     Type* type = ALLOC(alloc, sizeof(Type));
-    if (optional_token(TOKEN_COLON, lex)) {
+    if (optional_token(TOKEN_COLON, lex, NULL)) {
         *type = parse_type(alloc, lex);
     } else {
         *type = (Type){
@@ -468,7 +564,7 @@ AST* parse_var_decl(Allocator* alloc, Lexer* lex, Pos pos) {
         };
     }
     AST* ast = NULL;
-    if (optional_token(TOKEN_EQUALS, lex)) {
+    if (optional_token(TOKEN_EQUALS, lex, NULL)) {
         ast = ast_parse_expr(alloc, lex);
     }
     consume_required(TOKEN_SEMI, lex);
@@ -506,7 +602,7 @@ AST* ast_parse_stmt(Allocator* alloc, Lexer* lex) {
         AST* cond = ast_parse_expr(alloc, lex);
         AST* then = ast_parse_stmt(alloc, lex);
         AST* el = NULL;
-        if (optional_token(TOKEN_ELSE, lex)) {
+        if (optional_token(TOKEN_ELSE, lex, NULL)) {
             el = ast_parse_stmt(alloc, lex);
         }
         AST* p = ALLOC(alloc, sizeof(AST));
@@ -526,7 +622,7 @@ AST* ast_parse_stmt(Allocator* alloc, Lexer* lex) {
         freeToken(&token);
         return block;
     case TOKEN_RETURN: {
-        if (optional_token(TOKEN_SEMI, lex)) {
+        if (optional_token(TOKEN_SEMI, lex, NULL)) {
             AST* p = ALLOC(alloc, sizeof(AST));
             *p = (AST){
                 SETPOS(&token),
@@ -565,9 +661,31 @@ AST* ast_parse_stmt(Allocator* alloc, Lexer* lex) {
     }
 }
 
+AST* parse_struct(Allocator* alloc, Lexer* lex, Pos pos) {
+    Token ident = require_token(TOKEN_IDENT, lex);
+    String name = string_clone(&ident.data, alloc);
+    consume_required(TOKEN_OPEN_BRACE, lex);
+    freeToken(&ident);
+    ParameterList fields = parse_struct_fields(alloc, lex);
+    AST* p = ALLOC(alloc, sizeof(AST));
+    *p = (AST){
+        SETPOS(&pos),
+        .alloc = alloc,
+        .kind = AST_STRUCT,
+        .data.struct_def.name = name,
+        .data.struct_def.fields = fields,
+    };
+    return p;
+}
+
 AST* ast_parse_decl(Allocator* alloc, Lexer* lex, bool toplevel) {
     Token token = getToken(lex);
     switch (token.kind) {
+    case TOKEN_STRUCT:
+        assert(toplevel, "Struct declarations must be at toplevel\n");
+        auto strct = parse_struct(alloc, lex, ASPOS(&token));
+        freeToken(&token);
+        return strct;
     case TOKEN_FN:
         assert(toplevel, "function declarations must be at toplevel\n");
         auto fn = parse_fn(alloc, lex, ASPOS(&token));
@@ -583,6 +701,7 @@ AST* ast_parse_decl(Allocator* alloc, Lexer* lex, bool toplevel) {
         freeToken(&token);
         return decl;
     default:
+        assert(!toplevel, "statements are not allowed at toplevel\n");
         unreadToken(token, lex);
         return ast_parse_stmt(alloc, lex);
     }
@@ -660,11 +779,15 @@ static void print_escaped_string(String str) {
 }
 
 void type_display(Type* type) {
-    if (type->kind == TYPE_POINTER) {
+    switch (type->kind) {
+    case TYPE_POINTER:
         type_display(type->data.pointer.child);
         printf("*");
-        return;
-    } else if (type->kind == TYPE_FUNCTION) {
+        break;
+    case TYPE_USER_DEFINED:
+        printf(STRING, FMTSTRING(&type->data.user_defined.name));
+        break;
+    case TYPE_FUNCTION:
         printf("(fn ");
         if (type->data.function.conv == CONV_C) {
             printf("C ");
@@ -683,9 +806,11 @@ void type_display(Type* type) {
         printf(") -> ");
         type_display(type->data.function.return_type);
         printf(")");
-        return;
+        break;
+    default:
+        printf("%s", TYPEKIND[type->kind]);
+        break;
     }
-    printf("%s", TYPEKIND[type->kind]);
 }
 
 void ast_display_i(AST* ast, size_t depth) {
@@ -696,6 +821,32 @@ void ast_display_i(AST* ast, size_t depth) {
         printf("    ");
 
     switch (ast->kind) {
+    case AST_STRUCT_INIT:
+        printf("Struct initializer: " STRING ": " POS "\n",
+               FMTSTRING(&ast->data.struct_init.name), FMTPOS(ast));
+
+        if (ast->data.struct_init.fields)
+            da_foreach(field, ast->data.struct_init.fields) {
+                for (size_t i = 0; i < depth + 1; i++)
+                    printf("    ");
+
+                printf("Field " STRING ":\n", FMTSTRING(&field->name));
+                ast_display_i(field->value, depth + 2);
+            }
+        break;
+    case AST_STRUCT:
+        printf("Struct: " STRING ": " POS "\n",
+               FMTSTRING(&ast->data.struct_def.name), FMTPOS(ast));
+
+        da_foreach(field, &ast->data.struct_def.fields) {
+            for (size_t i = 0; i < depth + 1; i++)
+                printf("    ");
+
+            printf("Field " STRING ": ", FMTSTRING(&field->name));
+            type_display(field->type);
+            printf("\n");
+        }
+        break;
     case AST_UNOP:
         // TASK(20261117-000114-418-n6-72f292f8): make printing also show if its
         // postfix
@@ -848,14 +999,22 @@ void ast_display(AST* ast) { ast_display_i(ast, 0); }
 void type_free(Type* type) {
     if (type == NULL)
         return;
-    if (type->kind == TYPE_POINTER) {
+    switch (type->kind) {
+    case TYPE_POINTER:
         type_free(type->data.pointer.child);
-    } else if (type->kind == TYPE_FUNCTION) {
+        break;
+    case TYPE_FUNCTION:
         type_free(type->data.function.return_type);
         da_free_call(&type->data.function.params, b, {
             da_free(&b->name);
             type_free(b->type);
         });
+        break;
+    case TYPE_USER_DEFINED:
+        da_free(&type->data.user_defined.name);
+        break;
+    default:
+        break;
     }
     FREE(type->alloc, type);
 }
@@ -864,6 +1023,23 @@ void ast_free(AST* ast) {
     if (ast == NULL)
         return;
     switch (ast->kind) {
+    case AST_STRUCT_INIT:
+        da_free(&ast->data.struct_init.name);
+        if (ast->data.struct_init.fields != NULL) {
+            da_free_call(ast->data.struct_init.fields, b, {
+                da_free(&b->name);
+                ast_free(b->value);
+            });
+            FREE(ast->alloc, ast->data.struct_init.fields);
+        }
+        break;
+    case AST_STRUCT:
+        da_free(&ast->data.struct_def.name);
+        da_free_call(&ast->data.struct_def.fields, b, {
+            da_free(&b->name);
+            type_free(b->type);
+        });
+        break;
     case AST_UNOP:
         ast_free(ast->data.unop.operand);
         break;

@@ -1,13 +1,20 @@
+struct Color {
+    r: u8;
+    g: u8;
+    b: u8;
+    a: u8;
+}
 extern C fn InitWindow(i32, i32, cstr);
 extern C fn CloseWindow();
 extern C fn WindowShouldClose() -> bool;
 extern C fn BeginDrawing();
 extern C fn EndDrawing();
-extern C fn ClearBackground(u32);
-extern C fn DrawRectangle(i32, i32, i32, i32, u32);
+extern C fn ClearBackground(Color);
+extern C fn DrawRectangle(i32, i32, i32, i32, Color);
 extern C fn SetTargetFPS(i32);
 extern C fn GetScreenWidth() -> i32;
 extern C fn GetScreenHeight() -> i32;
+
 
 fn main() -> i32 {
     InitWindow(800, 600, "Hello from lutetium");
@@ -21,8 +28,18 @@ fn main() -> i32 {
     SetTargetFPS(30);
     while !WindowShouldClose() {
         BeginDrawing();
-        ClearBackground(0xff181818);
-        DrawRectangle(x, y, size, size, 0xff0000ff);
+        ClearBackground(Color {
+            .r = 0x18,
+            .g = 0x18,
+            .b = 0x18,
+            .a = 0xFF,
+        });
+        DrawRectangle(x, y, size, size, Color {
+            .r = 0xff,
+            .g = 0,
+            .b = 0,
+            .a = 0xff,
+        });
         let nx = x+vx;
         let ny = y+vy;
         if (nx < 0 || nx + size > width) vx = -vx; else x = nx;

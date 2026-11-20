@@ -11,6 +11,7 @@ void free_scope(Scope*);
     X(".INFER", TYPE_INFER)                                                    \
     X(".POINTER", TYPE_POINTER)                                                \
     X(".FUNCTION", TYPE_FUNCTION)                                              \
+    X(".USER_DEFINED", TYPE_USER_DEFINED)                                      \
     X("void", TYPE_VOID)                                                       \
     X("i8", TYPE_I8)                                                           \
     X("i16", TYPE_I16)                                                         \
@@ -142,6 +143,9 @@ struct Type {
             bool va_args;
             FnConv conv;
         } function;
+        struct {
+            String name;
+        } user_defined;
     } data;
 };
 
@@ -168,6 +172,8 @@ typedef enum ASTKind {
     AST_WHILE,
     AST_BINOP,
     AST_UNOP,
+    AST_STRUCT,
+    AST_STRUCT_INIT,
 } ASTKind;
 
 #define ENUM(name, _) name,
@@ -175,6 +181,11 @@ static const char* FN_CONV_NAMES[] = {FN_CONV_KIND(ENUM)};
 #undef ENUM
 
 typedef struct AST AST;
+typedef struct StructInitializerField {
+    String name;
+    AST* value;
+} StructInitializerField;
+typedef DA(StructInitializerField) StructInitializerFields;
 typedef DA(AST*) ASTList;
 struct AST {
     Allocator* alloc;
@@ -182,6 +193,14 @@ struct AST {
     size_t line, col;
     Type* type; // filled during semantic analysis
     union {
+        struct {
+            String name;
+            StructInitializerFields* fields; //if NULL 0 initialize
+        } struct_init;
+        struct {
+            String name;
+            ParameterList fields;
+        } struct_def;
         struct {
             AST* operand;
             UnOpKind op;

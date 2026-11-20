@@ -56,7 +56,8 @@ struct Pos {
     X("&&", TOKEN_LAND)                                                        \
     X("||", TOKEN_OR)                                                          \
     X("@", TOKEN_AT)                                                           \
-    X("!", TOKEN_EXC)
+    X("!", TOKEN_EXC)                                                          \
+    X(".", TOKEN_DOT)
 
 #define KEYWORD_LIST(X)                                                        \
     X("fn", TOKEN_FN)                                                          \
@@ -67,7 +68,8 @@ struct Pos {
     X("return", TOKEN_RETURN)                                                  \
     X("if", TOKEN_IF)                                                          \
     X("while", TOKEN_WHILE)                                                    \
-    X("else", TOKEN_ELSE)
+    X("else", TOKEN_ELSE)                                                      \
+    X("struct", TOKEN_STRUCT)
 
 #define KV_ENUM_VALUE(_, kind) kind,
 typedef enum TokenKind {

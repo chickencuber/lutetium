@@ -1,4 +1,4 @@
-// TASK(20261115-202733-164-n6-1d8bf5a8): make this smarter
+//TASK(20261115-202733-164-n6-1d8bf5a8): make this smarter
 #include "analysis.h"
 #include "aids.h"
 #include "ast.h"
@@ -44,6 +44,11 @@ Type* type_clone(Allocator* alloc, const Type* type) {
         break;
     }
 
+    case TYPE_USER_DEFINED:
+        String other = type->data.user_defined.name;
+        clone->data.user_defined.name = string_clone(&other, alloc);
+        break;
+
     default:
         break;
     }
@@ -70,6 +75,10 @@ bool type_equal(const Type* a, const Type* b) {
         return false;
 
     switch (a->kind) {
+    case TYPE_USER_DEFINED:
+        return string_compare(a->data.user_defined.name,
+                              b->data.user_defined.name);
+
     case TYPE_POINTER:
         return type_equal(a->data.pointer.child, b->data.pointer.child);
 
@@ -295,7 +304,8 @@ Symbol* add_symbol(Allocator* alloc, Scope* scope, String name, Type type,
     String key = string_clone(&name, alloc);
 
     Symbol symbol = {
-        .type = type_clone(alloc, &type),
+        .kind = SYMBOL_VALUE,
+        .data.type = type_clone(alloc, &type),
         .mangled = mangle_name(alloc, name),
         .compiler_data = NULL,
     };
@@ -305,15 +315,23 @@ Symbol* add_symbol(Allocator* alloc, Scope* scope, String name, Type type,
 }
 
 Symbol* get_symbol(Scope* scope, String name, Pos pos) {
-    assert(scope != NULL, "symbol '" STRING "' doesn't exist at: " POS "\n",
-           FMTSTRING(&name), FMTPOS(&pos));
+    if (scope == NULL) {
+        assert(false, "symbol '" STRING "' doesn't exist at: " POS "\n",
+               FMTSTRING(&name), FMTPOS(&pos));
+        return NULL;
+    }
 
     Symbol* symbol = hm_get(&scope->symbols, name);
 
     if (symbol != NULL)
         return symbol;
 
-    return get_symbol(scope->parent, name, pos);
+    if (scope->parent != NULL)
+        return get_symbol(scope->parent, name, pos);
+
+    assert(false, "symbol '" STRING "' doesn't exist at: " POS "\n",
+           FMTSTRING(&name), FMTPOS(&pos));
+    return NULL;
 }
 
 void free_scope(Scope* scope) {
@@ -323,7 +341,8 @@ void free_scope(Scope* scope) {
     hm_free_call(&scope->symbols, d, {
         da_free(&d->key);
         da_free(&d->value.mangled);
-        type_free(d->value.type);
+        if (d->value.kind == SYMBOL_VALUE)
+            type_free(d->value.data.type);
     });
 
     FREE(scope->alloc, scope);
@@ -353,6 +372,24 @@ void fn(Allocator*, AST*, Scope*);
 void fn_decl(Allocator*, AST*, Scope*);
 
 void register_function(Allocator*, AST*, Scope*);
+void register_struct(AST*, Scope*);
+
+void register_struct(AST* ast, Scope* scope) {
+    String name = ast->data.struct_def.name;
+
+    assert(!hm_has(&scope->symbols, name),
+           "symbol '" STRING "' already defined at: " POS "\n",
+           FMTSTRING(&name), FMTPOS(ast));
+
+    Symbol symbol = {
+        .kind = SYMBOL_TYPE,
+        .data.params = &ast->data.struct_def.fields,
+        .mangled = {0},
+        .compiler_data = NULL,
+    };
+
+    hm_set(&scope->symbols, string_clone(&name, scope->alloc), symbol);
+}
 
 /* ------------------------------------------------------------------------- */
 /* Function registration                                                     */
@@ -402,8 +439,7 @@ void register_function(Allocator* alloc, AST* ast, Scope* scope) {
         da_append(&type->data.function.params, cloned);
     }
 
-    bool is_entrypoint = ast->kind == AST_FUNCTION &&
-                         scope->parent == NULL &&
+    bool is_entrypoint = ast->kind == AST_FUNCTION && scope->parent == NULL &&
                          string_compare_cstr(name, "main");
 
     String mangled;
@@ -418,7 +454,8 @@ void register_function(Allocator* alloc, AST* ast, Scope* scope) {
     String key = string_clone(&name, alloc);
 
     Symbol symbol = {
-        .type = type,
+        .kind = SYMBOL_VALUE,
+        .data.type = type,
         .mangled = mangled,
         .compiler_data = NULL,
     };
@@ -449,9 +486,7 @@ static bool is_lvalue(AST* ast) {
     }
 }
 
-static bool is_assignable(AST* ast) {
-    return is_lvalue(ast);
-}
+static bool is_assignable(AST* ast) { return is_lvalue(ast); }
 
 static bool is_integer_literal(AST* ast) {
     return ast->kind == AST_INT_LITERAL;
@@ -517,8 +552,7 @@ static void integer_operands(Allocator* alloc, AST* lhs, AST* rhs, Scope* scope,
     if (rhs_literal) {
         *left = expression(alloc, lhs, scope, expected);
 
-        Type* literal_expected =
-            type_is_integer((*left)->kind) ? *left : NULL;
+        Type* literal_expected = type_is_integer((*left)->kind) ? *left : NULL;
 
         *right = expression(alloc, rhs, scope, literal_expected);
         return;
@@ -540,8 +574,7 @@ static Type* unop(Allocator* alloc, AST* ast, Scope* scope, Type* expected) {
 
     switch (ast->data.unop.op) {
     case UP_REF: {
-        assert(is_lvalue(operand),
-               "cannot take the address of a non-lvalue\n");
+        assert(is_lvalue(operand), "cannot take the address of a non-lvalue\n");
 
         /*
          * Address-of changes the type:
@@ -662,31 +695,28 @@ static Type* binop(Allocator* alloc, AST* ast, Scope* scope, Type* expected) {
         return make_type(alloc, TYPE_BOOL);
     }
 
-    bool integer_operator =
-        op == OP_ADD || op == OP_SUB || op == OP_MUL ||
-        op == OP_DIV || op == OP_MOD || op == OP_SHL ||
-        op == OP_SHR || op == OP_BAND || op == OP_BOR ||
-        op == OP_XOR || op == OP_LT || op == OP_GT ||
-        op == OP_LE || op == OP_GE;
+    bool integer_operator = op == OP_ADD || op == OP_SUB || op == OP_MUL ||
+                            op == OP_DIV || op == OP_MOD || op == OP_SHL ||
+                            op == OP_SHR || op == OP_BAND || op == OP_BOR ||
+                            op == OP_XOR || op == OP_LT || op == OP_GT ||
+                            op == OP_LE || op == OP_GE;
 
     if (integer_operator) {
-        bool integer_result =
-            op == OP_ADD || op == OP_SUB || op == OP_MUL ||
-            op == OP_DIV || op == OP_MOD || op == OP_SHL ||
-            op == OP_SHR || op == OP_BAND || op == OP_BOR ||
-            op == OP_XOR;
+        bool integer_result = op == OP_ADD || op == OP_SUB || op == OP_MUL ||
+                              op == OP_DIV || op == OP_MOD || op == OP_SHL ||
+                              op == OP_SHR || op == OP_BAND || op == OP_BOR ||
+                              op == OP_XOR;
 
-        Type* operand_expected =
-            integer_result && expected != NULL &&
-                    type_is_integer(expected->kind)
-                ? expected
-                : NULL;
+        Type* operand_expected = integer_result && expected != NULL &&
+                                         type_is_integer(expected->kind)
+                                     ? expected
+                                     : NULL;
 
         Type* left;
         Type* right;
 
-        integer_operands(alloc, lhs, rhs, scope, operand_expected,
-                         &left, &right);
+        integer_operands(alloc, lhs, rhs, scope, operand_expected, &left,
+                         &right);
 
         assert(type_equal(left, right),
                "binary operator operands must have matching types\n");
@@ -716,15 +746,12 @@ static Type* binop(Allocator* alloc, AST* ast, Scope* scope, Type* expected) {
          */
         if (is_integer_literal(lhs) && !is_integer_literal(rhs)) {
             right = expression(alloc, rhs, scope, NULL);
-            left = expression(
-                alloc, lhs, scope,
-                type_is_integer(right->kind) ? right : NULL);
-        } else if (!is_integer_literal(lhs) &&
-                   is_integer_literal(rhs)) {
+            left = expression(alloc, lhs, scope,
+                              type_is_integer(right->kind) ? right : NULL);
+        } else if (!is_integer_literal(lhs) && is_integer_literal(rhs)) {
             left = expression(alloc, lhs, scope, NULL);
-            right = expression(
-                alloc, rhs, scope,
-                type_is_integer(left->kind) ? left : NULL);
+            right = expression(alloc, rhs, scope,
+                               type_is_integer(left->kind) ? left : NULL);
         } else {
             left = expression(alloc, lhs, scope, NULL);
             right = expression(alloc, rhs, scope, NULL);
@@ -733,10 +760,8 @@ static Type* binop(Allocator* alloc, AST* ast, Scope* scope, Type* expected) {
         assert(type_equal(left, right),
                "equality operands must have matching types\n");
 
-        assert(type_is_integer(left->kind) ||
-                   left->kind == TYPE_BOOL ||
-                   left->kind == TYPE_CSTR ||
-                   left->kind == TYPE_POINTER,
+        assert(type_is_integer(left->kind) || left->kind == TYPE_BOOL ||
+                   left->kind == TYPE_CSTR || left->kind == TYPE_POINTER,
                "equality operators don't support these operands\n");
 
         return make_type(alloc, TYPE_BOOL);
@@ -796,21 +821,24 @@ Type* expression(Allocator* alloc, AST* ast, Scope* scope, Type* expected) {
 
     case AST_IDENT: {
         Symbol* symbol = get_symbol(scope, ast->data.ident.name, pos);
-        ast->type = type_clone(alloc, symbol->type);
+        assert(symbol->kind == SYMBOL_VALUE,
+               "type name used as a value at: " POS "\n", FMTPOS(&pos));
+        ast->type = type_clone(alloc, symbol->data.type);
         break;
     }
 
     case AST_FUNCTION_CALL: {
         Symbol* symbol = get_symbol(scope, ast->data.function_call.name, pos);
 
-        Type* function = symbol->type;
+        assert(symbol->kind == SYMBOL_VALUE,
+               "type name used as a function at: " POS "\n", FMTPOS(&pos));
+        Type* function = symbol->data.type;
 
         if (function->kind == TYPE_POINTER)
             function = function->data.pointer.child;
 
         assert(function->kind == TYPE_FUNCTION,
-               "called object is not a function at: " POS "\n",
-               FMTPOS(&pos));
+               "called object is not a function at: " POS "\n", FMTPOS(&pos));
 
         ParameterList* params = &function->data.function.params;
         ASTList* args = &ast->data.function_call.args;
@@ -831,12 +859,65 @@ Type* expression(Allocator* alloc, AST* ast, Scope* scope, Type* expected) {
 
             if (expected_arg != NULL) {
                 assert(type_equal(actual, expected_arg),
-                       "incorrect argument type at: " POS "\n",
-                       FMTPOS(&pos));
+                       "incorrect argument type at: " POS "\n", FMTPOS(&pos));
             }
         }
 
         ast->type = type_clone(alloc, function->data.function.return_type);
+        break;
+    }
+
+    case AST_STRUCT_INIT: {
+        String name = ast->data.struct_init.name;
+        Symbol* symbol = get_symbol(scope, name, pos);
+
+        assert(symbol->kind == SYMBOL_TYPE,
+               "'" STRING "' is not a struct type at: " POS "\n",
+               FMTSTRING(&name), FMTPOS(&pos));
+
+        ParameterList* fields = symbol->data.params;
+        StructInitializerFields* initializers = ast->data.struct_init.fields;
+
+        if (initializers != NULL) {
+            for (size_t i = 0; i < initializers->len; i++) {
+                StructInitializerField* initializer = &initializers->data[i];
+                Parameter* field = NULL;
+
+                for (size_t j = 0; j < fields->len; j++) {
+                    if (string_compare(initializer->name,
+                                       fields->data[j].name)) {
+                        field = &fields->data[j];
+                        break;
+                    }
+                }
+
+                Pos field_pos = {initializer->value->line,
+                                 initializer->value->col};
+                assert(field != NULL,
+                       "unknown field '" STRING "' in struct '" STRING
+                       "' at: " POS "\n",
+                       FMTSTRING(&initializer->name), FMTSTRING(&name),
+                       FMTPOS(&field_pos));
+
+                for (size_t j = 0; j < i; j++) {
+                    assert(!string_compare(initializers->data[j].name,
+                                           initializer->name),
+                           "duplicate struct initializer field '" STRING
+                           "' at: " POS "\n",
+                           FMTSTRING(&initializer->name), FMTPOS(&field_pos));
+                }
+
+                Type* actual =
+                    expression(alloc, initializer->value, scope, field->type);
+                assert(type_equal(actual, field->type),
+                       "initializer type mismatch for field '" STRING
+                       "' at: " POS "\n",
+                       FMTSTRING(&initializer->name), FMTPOS(&field_pos));
+            }
+        }
+
+        ast->type = make_type(alloc, TYPE_USER_DEFINED);
+        ast->type->data.user_defined.name = string_clone(&name, alloc);
         break;
     }
 
@@ -884,6 +965,10 @@ void statement(Allocator* alloc, AST* ast, Scope* scope, Type* return_type) {
     switch (ast->kind) {
     case AST_BLOCK:
         block(alloc, ast, scope, return_type);
+        break;
+
+    case AST_STRUCT:
+        /* Structs are registered during the block's declaration prepass. */
         break;
 
     case AST_FUNCTION:
@@ -962,8 +1047,7 @@ void statement(Allocator* alloc, AST* ast, Scope* scope, Type* return_type) {
         break;
 
     default:
-        assert(false, "unsupported statement node at: " POS "\n",
-               FMTPOS(&pos));
+        assert(false, "unsupported statement node at: " POS "\n", FMTPOS(&pos));
     }
 }
 
@@ -984,8 +1068,7 @@ void fn(Allocator* alloc, AST* ast, Scope* parent) {
 }
 
 void fn_decl(Allocator* alloc, AST* ast, Scope* parent) {
-    Scope* scope =
-        ast->data.function_decl.scope = createScope(alloc, parent);
+    Scope* scope = ast->data.function_decl.scope = createScope(alloc, parent);
 
     da_foreach(param, &ast->data.function_decl.params) {
         if (param->name.data == NULL)
@@ -1001,10 +1084,13 @@ void block(Allocator* alloc, AST* ast, Scope* parent, Type* return_type) {
 
     Scope* scope = ast->data.block.scope = createScope(alloc, parent);
 
-    /*
-     * Register functions first so they can refer to declarations
-     * appearing later in the same block.
-     */
+    /* Register types and functions before analyzing statements so later
+     * declarations are visible throughout the block. */
+    da_foreach(stmt, &ast->data.block.statements) {
+        if ((*stmt)->kind == AST_STRUCT)
+            register_struct(*stmt, scope);
+    }
+
     da_foreach(stmt, &ast->data.block.statements) {
         if ((*stmt)->kind == AST_FUNCTION ||
             (*stmt)->kind == AST_FUNCTION_DECL) {

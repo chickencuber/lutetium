@@ -11,7 +11,7 @@ syn match lutIdentifier /\<[a-zA-Z_][a-zA-Z0-9_]*\>/
 
 " Keywords
 syn keyword lutKeyword fn nextgroup=lutFunctionDecl,lutCallingConvention skipwhite
-syn keyword lutKeyword return let else if while
+syn keyword lutKeyword return let else if while struct
 
 " Extern declarations
 syn match lutKeyword /\<extern\>/ nextgroup=lutCallingConvention skipwhite
